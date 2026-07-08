@@ -9,7 +9,9 @@ import Layout from "./pages/Layout";
 import Dashboard from "./pages/Dashboard";
 import Gantt from "./pages/Gantt";
 import Orders from "./pages/Orders";
+import OrderDetail from "./pages/OrderDetail";
 import Customers from "./pages/Customers";
+import CustomerDetail from "./pages/CustomerDetail";
 import Settings from "./pages/Settings";
 import "./styles.css";
 
@@ -36,7 +38,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route index element={<Dashboard />} />
             <Route path="gantt" element={<Gantt />} />
             <Route path="orders" element={<Orders />} />
+            <Route path="orders/:id" element={<OrderDetail />} />
             <Route path="customers" element={<Customers />} />
+            <Route path="customers/:id" element={<CustomerDetail />} />
             <Route path="settings" element={<Settings />} />
           </Route>
         </Routes>
