@@ -212,7 +212,7 @@ export default function Gantt() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pxph, view, rows.length]);
 
-  function beginDrag(e: React.MouseEvent, opt: { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number } | { kind: "new"; opId: number; durMin: number }) {
+  function beginDrag(e: React.MouseEvent, opt: { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number; overtime: boolean } | { kind: "new"; opId: number; durMin: number }) {
     e.preventDefault();
     setPop(null);
     const startX = e.clientX, startY = e.clientY;
@@ -233,7 +233,9 @@ export default function Gantt() {
     const onMove = (ev: MouseEvent) => {
       if (Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3) moved = true;
       snap = compute(ev.clientX, ev.clientY);
-      const seg0 = buildSegments(snap.ms, opt.durMin, shiftOf(snap.machine))[0];
+      const seg0 = opt.kind === "move" && opt.overtime
+        ? { start: snap.ms, end: snap.ms + opt.durMin * 60000 }
+        : buildSegments(snap.ms, opt.durMin, shiftOf(snap.machine))[0];
       const left = LABEL_W + xOf(seg0.start), w = Math.max(xOf(seg0.end) - xOf(seg0.start), 10);
       if (el) el.classList.add("dragging");
       if (preview) { preview.style.display = "block"; preview.style.left = left + "px"; preview.style.top = HEAD_H + snap.row * ROW_H + BAR_TOP + "px"; preview.style.width = w + "px"; }
@@ -422,7 +424,7 @@ export default function Gantt() {
                           <div key={`${o.id}-${si}`} className={"g-bar " + barClass(o) + (si > 0 ? " cont" : "") + (otMin > 0 ? " overtime" : "")}
                             style={{ left: LABEL_W + xOf(seg.start), width: w }}
                             title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt${otMin > 0 ? `\n⚠ ${fmtDur(otMin)} övertid (utanför arbetstid)` : ""}\nKlicka för status · dra för att flytta`}
-                            onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: new Date(o.start_time!).getTime(), origMachine: o.machine_id, durMin: o.duration_minutes })}>
+                            onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: new Date(o.start_time!).getTime(), origMachine: o.machine_id, durMin: o.duration_minutes, overtime: o.overtime })}>
                             {si === 0 && <><span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</>}
                             {si === segs.length - 1 && <span className="resize-handle" title="Dra för att korta fasen — resten hamnar i backloggen" onMouseDown={(ev) => beginResize(ev, o)} />}
                           </div>
