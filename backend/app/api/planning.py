@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.db import get_db
 from app.models import (
@@ -101,3 +101,30 @@ def lock_operation(op_id: int, db: Session = Depends(get_db)):
     op.status = OperationStatus.locked
     db.commit(); db.refresh(op)
     return op
+
+
+@router.patch("/operations/{op_id}/schedule", dependencies=[Depends(planner)])
+def reschedule_operation(
+    op_id: int,
+    start: datetime,
+    machine_id: int | None = None,
+    replan: bool = True,
+    db: Session = Depends(get_db),
+):
+    """Flytta en operation (drag-släpp): sätt ny starttid/maskin, lås den och planera om
+    resten av schemat runt låsningen. Motorn respekterar locked_start + locked_machine."""
+    op = db.get(Operation, op_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Operation saknas")
+    op.start_time = start
+    op.end_time = start + timedelta(minutes=op.duration_minutes)
+    if machine_id is not None:
+        op.machine_id = machine_id
+    op.status = OperationStatus.locked
+    db.commit()
+
+    if replan:
+        version = run_planning(db, reason="manuell flytt")
+        return {"moved_op": op_id, "version": version.version, "solver_status": version.solver_status}
+    db.refresh(op)
+    return {"moved_op": op_id, "version": None}

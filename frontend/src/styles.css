@@ -177,6 +177,15 @@ tbody tr:hover { background: #fafbfc; }
   box-shadow: var(--shadow); font-weight: 600; z-index: 2; border: 1px solid rgba(0,0,0,0.08);
 }
 .g-bar:hover { filter: brightness(1.06); z-index: 5; }
+.g-bar { cursor: grab; user-select: none; }
+.g-bar.dragging { cursor: grabbing; opacity: 0.85; z-index: 20; box-shadow: 0 6px 16px rgba(0,0,0,0.25); }
+.g-arrows { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; overflow: visible; }
+.g-arrows path { fill: none; stroke: rgba(206,14,45,0.55); stroke-width: 1.6; }
+.dragging-active { user-select: none; cursor: grabbing; }
+.replan-toast {
+  position: fixed; bottom: 22px; right: 22px; background: var(--ink); color: #fff;
+  padding: 12px 18px; border-radius: 10px; box-shadow: var(--shadow-lg); font-weight: 600; z-index: 100;
+}
 .g-bar.ok { background: #16a34a; }
 .g-bar.running { background: #2563eb; }
 .g-bar.late { background: var(--red); }

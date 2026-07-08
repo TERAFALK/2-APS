@@ -50,6 +50,11 @@ export const api = {
   planDiff: () => request<any>("/plan/diff"),
   lockOperation: (id: number) =>
     request<any>(`/operations/${id}/lock`, { method: "POST" }),
+  moveOperation: (id: number, startIso: string, machineId?: number | null) => {
+    const params = new URLSearchParams({ start: startIso });
+    if (machineId != null) params.set("machine_id", String(machineId));
+    return request<any>(`/operations/${id}/schedule?${params}`, { method: "PATCH" });
+  },
   createOrder: (body: any) =>
     request<any>("/orders", { method: "POST", body: JSON.stringify(body) }),
   createProduct: (body: any) =>
