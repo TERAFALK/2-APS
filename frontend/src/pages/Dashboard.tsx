@@ -47,8 +47,8 @@ export default function Dashboard() {
                 <div key={m.machine_id} className="util-row">
                   <div className="util-top">
                     <span>
-                      {m.machine} <span className="subtle">· {m.busy_h}h bokat, {m.free_h}h ledigt</span>
-                      {m.overtime_h > 0 && <span className="ot-tag">⚠ {m.overtime_h}h övertid</span>}
+                      {m.machine} <span className="subtle">· {m.busy_h} h bokat, {m.free_h} h ledigt</span>
+                      {m.overtime_h > 0 && <span className="ot-tag">⚠ {m.overtime_h} h övertid</span>}
                     </span>
                     <span style={{ fontWeight: 700, color: hot ? "var(--red)" : undefined }}>{m.load_pct}%</span>
                   </div>

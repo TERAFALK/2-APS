@@ -21,7 +21,7 @@ const DAYS = 28;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const parseTime = (s?: string) => { if (!s) return { h: 7, m: 0 }; const [h, m] = s.split(":").map(Number); return { h: h || 0, m: m || 0 }; };
-const fmtDur = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1)}h` : `${min}m`);
+const fmtDur = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1).replace(".", ",").replace(",0", "")} h` : `${min} min`);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const msToLocalIso = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`; };
 function isoWeek(d: Date) {
@@ -444,7 +444,7 @@ export default function Gantt() {
                           ))}
                           <span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />
                           <span className="bar-label">{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</span>
-                          <span className="resize-handle" title="Dra för att korta fasen — resten hamnar i backloggen" onMouseDown={(ev) => beginResize(ev, o)} />
+                          <span className="resize-handle" title="Dra för att korta fasen — resten blir oplanerad" onMouseDown={(ev) => beginResize(ev, o)} />
                         </div>
                       );
                     })}
@@ -477,7 +477,7 @@ export default function Gantt() {
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "delayed" }); setPop(null); }}><span className="dot" style={{ background: "#ce0e2d" }} />Markera försenad</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "running" }); setPop(null); }}><span className="dot" style={{ background: "#2563eb" }} />Markera pågår</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "planned" }); setPop(null); }}><span className="dot" style={{ background: "#94a3b8" }} />Återställ status</button>
-              <button onClick={() => { unschedule.mutate(popState.opId); setPop(null); }}><span className="dot" style={{ background: "#111418" }} />Tillbaka till backlog</button>
+              <button onClick={() => { unschedule.mutate(popState.opId); setPop(null); }}><span className="dot" style={{ background: "#111418" }} />Gör oplanerad</button>
             </div>
           </>
         );

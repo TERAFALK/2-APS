@@ -61,9 +61,9 @@ export default function OrderDetail() {
                   <tr key={p.id}>
                     <td><strong>{i + 1}</strong></td>
                     <td>{p.name}</td>
-                    <td>{(p.duration_minutes / 60).toFixed(1)} h</td>
+                    <td>{(p.duration_minutes / 60).toFixed(1).replace(".", ",").replace(",0", "")} h</td>
                     <td>{p.start_time ? machineName(p.machine_id) : "—"}</td>
-                    <td><span className={"badge " + (p.start_time || p.status !== "planned" ? p.status : "draft")}>{p.start_time || p.status !== "planned" ? PHASE_STATUS[p.status] : "Backlog"}</span></td>
+                    <td><span className={"badge " + (p.start_time || p.status !== "planned" ? p.status : "draft")}>{p.start_time || p.status !== "planned" ? PHASE_STATUS[p.status] : "Ej planerad"}</span></td>
                     <td>
                       <button className="linkbtn" onClick={() => setStatus.mutate({ id: p.id, s: "done" })}>Klar</button>
                       <button className="linkbtn danger" onClick={() => setStatus.mutate({ id: p.id, s: "delayed" })}>Försenad</button>

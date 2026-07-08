@@ -162,6 +162,28 @@ tbody tr:hover { background: #fbfcfd; }
 .flag { color: var(--red); font-weight: 700; font-size: 12px; }
 .ot-tag { color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 1px 7px; font-size: 12px; font-weight: 700; margin-left: 8px; }
 
+/* ---------------- Designputs ---------------- */
+.card { transition: box-shadow 0.15s, border-color 0.15s; }
+tbody tr { transition: background 0.1s; }
+tbody tr[style*="cursor"] :is(td) { position: relative; }
+tbody tr[style*="cursor"]:hover { background: #f5f8ff; }
+.badge, .prio { line-height: 1.4; vertical-align: middle; }
+.page-head h1 { line-height: 1.2; }
+
+/* slimmade rullningslister i tidslinjen */
+.gantt2 { scrollbar-width: thin; scrollbar-color: #c7ccd4 transparent; }
+.gantt2::-webkit-scrollbar { height: 12px; }
+.gantt2::-webkit-scrollbar-thumb { background: #c7ccd4; border-radius: 6px; border: 3px solid #fff; }
+.gantt2::-webkit-scrollbar-thumb:hover { background: #aeb4bd; }
+.gantt2::-webkit-scrollbar-track { background: transparent; }
+
+/* mjukare fokus och knapptryck */
+.btn:focus-visible, .iconbtn:focus-visible, .linkbtn:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.seg-toggle button { transition: background 0.12s, color 0.12s; }
+
+/* luftigare kort-rubriker */
+.card h2 { display: flex; align-items: center; gap: 8px; }
+
 /* ---------------- Gantt (ljus, dagsbaserad) ---------------- */
 .gantt-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .gantt2 { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow-x: auto; overflow-y: hidden; }
