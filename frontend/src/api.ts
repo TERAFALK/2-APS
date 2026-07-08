@@ -56,6 +56,10 @@ export const api = {
     request<any>("/products", { method: "POST", body: JSON.stringify(body) }),
   createMachine: (body: any) =>
     request<any>("/machines", { method: "POST", body: JSON.stringify(body) }),
+  createMachineType: (body: any) =>
+    request<any>("/machine-types", { method: "POST", body: JSON.stringify(body) }),
+  addRouting: (productId: number, body: any) =>
+    request<any>(`/products/${productId}/routing`, { method: "POST", body: JSON.stringify(body) }),
 };
 
 export const isLoggedIn = () => !!token();

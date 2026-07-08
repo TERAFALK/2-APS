@@ -7,14 +7,21 @@ export default function Replan() {
 
   return (
     <>
-      <h1>Om-planering — skillnad mot föregående plan</h1>
-      <p style={{ color: "var(--muted)" }}>
-        {data?.message ??
-          `${data?.total_changes ?? 0} förändringar mellan version ${data?.base_version ?? "–"} och ${
-            data?.new_version ?? "–"
-          }.`}
-      </p>
-      {changes.length > 0 && (
+      <div className="page-head">
+        <h1>Om-planering</h1>
+        <span className="subtle">
+          {data?.message ??
+            `${data?.total_changes ?? 0} förändringar (v${data?.base_version ?? "–"} → v${data?.new_version ?? "–"})`}
+        </span>
+      </div>
+      {changes.length === 0 ? (
+        <div className="empty">
+          <div className="icon">🔄</div>
+          <h3>Inga planändringar</h3>
+          <div>Kör planeringen minst två gånger så visas skillnaderna här.</div>
+        </div>
+      ) : (
+        <div className="table-wrap">
         <table>
           <thead>
             <tr>
@@ -45,6 +52,7 @@ export default function Replan() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </>
   );

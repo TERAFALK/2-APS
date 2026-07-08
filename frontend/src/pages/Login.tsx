@@ -22,9 +22,10 @@ export default function Login() {
   return (
     <div className="login-wrap">
       <form className="login-box" onSubmit={submit}>
-        <div className="logo" style={{ fontSize: 22, fontWeight: 800, marginBottom: 16 }}>
-          VÄNER<span className="brand">TEKNO</span> APS
+        <div className="logo">
+          VÄNER<span>TEKNO</span>
         </div>
+        <div className="tag">Produktionsplanering · APS</div>
         <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-post" />
         <input
           type="password"

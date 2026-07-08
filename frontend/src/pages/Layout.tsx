@@ -1,23 +1,42 @@
+import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { api } from "../api";
 
+const links = [
+  { to: "/", label: "Dashboard", end: true },
+  { to: "/gantt", label: "Gantt-planering" },
+  { to: "/replan", label: "Om-planering" },
+  { to: "/orders", label: "Order" },
+  { to: "/masterdata", label: "Grunddata" },
+];
+
 export default function Layout() {
   const nav = useNavigate();
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: api.me });
+
   return (
     <div className="app">
       <aside className="sidebar">
         <div className="logo">
           VÄNER<span>TEKNO</span>
+          <small>APS PLANNING</small>
         </div>
         <nav className="nav">
-          <NavLink to="/" end>
-            Dashboard
-          </NavLink>
-          <NavLink to="/gantt">Gantt-planering</NavLink>
-          <NavLink to="/replan">Om-planering</NavLink>
-          <NavLink to="/orders">Order</NavLink>
+          {links.map((l) => (
+            <NavLink key={l.to} to={l.to} end={l.end}>
+              <span className="dot" />
+              {l.label}
+            </NavLink>
+          ))}
         </nav>
         <div className="spacer" />
+        {me && (
+          <div className="user">
+            {me.full_name || me.email}
+            <br />
+            <span style={{ textTransform: "capitalize" }}>{me.role}</span>
+          </div>
+        )}
         <button
           className="logout"
           onClick={() => {

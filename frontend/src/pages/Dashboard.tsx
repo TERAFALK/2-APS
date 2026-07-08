@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 
-function Card({ label, value, red }: { label: string; value: any; red?: boolean }) {
+function Kpi({ label, value, tone }: { label: string; value: any; tone?: "red" | "green" }) {
   return (
-    <div className="card">
+    <div className="card kpi">
       <div className="label">{label}</div>
-      <div className={"value" + (red ? " red" : "")}>{value}</div>
+      <div className={"value" + (tone ? " " + tone : "")}>{value}</div>
     </div>
   );
 }
@@ -14,44 +14,59 @@ export default function Dashboard() {
   const { data } = useQuery({ queryKey: ["kpi"], queryFn: api.kpi });
   const { data: util = [] } = useQuery<any[]>({ queryKey: ["util"], queryFn: api.utilization });
 
+  const precision = data?.delivery_precision_pct;
+
   return (
     <>
-      <h1>Produktionsöversikt</h1>
-      <div className="cards">
-        <Card label="Aktiva order" value={data?.orders_active ?? "–"} />
-        <Card label="Färdiga order" value={data?.orders_done ?? "–"} />
-        <Card label="Försenade order" value={data?.orders_late ?? "–"} red />
-        <Card label="Leveransprecision" value={(data?.delivery_precision_pct ?? "–") + " %"} />
-        <Card label="Total order" value={data?.orders_total ?? "–"} />
-        <Card label="Schemaversion" value={data?.active_schedule_version ?? "–"} />
+      <div className="page-head">
+        <h1>Produktionsöversikt</h1>
+        <span className="subtle">Realtidsstatus för aktivt schema</span>
       </div>
 
-      <h1 style={{ marginTop: 32 }}>Maskinutnyttjande & flaskhalsar</h1>
-      <div className="card">
-        {util.length === 0 && <span style={{ color: "var(--muted)" }}>Kör en planering först.</span>}
-        {util.map((u) => (
-          <div key={u.machine_id} style={{ margin: "10px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-              <span>
-                {u.machine}
-                {u.utilization_pct >= 85 && (
-                  <span style={{ color: "var(--red)", fontWeight: 700 }}> ⚠ flaskhals</span>
-                )}
-              </span>
-              <span>{u.utilization_pct}%</span>
-            </div>
-            <div style={{ background: "#f0f1f4", borderRadius: 6, height: 14, marginTop: 4 }}>
-              <div
-                style={{
-                  width: `${Math.min(u.utilization_pct, 100)}%`,
-                  height: 14,
-                  borderRadius: 6,
-                  background: u.utilization_pct >= 85 ? "var(--red)" : "#3b82f6",
-                }}
-              />
-            </div>
+      <div className="cards">
+        <Kpi label="Aktiva order" value={data?.orders_active ?? "–"} />
+        <Kpi label="Färdiga order" value={data?.orders_done ?? "–"} tone="green" />
+        <Kpi label="Försenade order" value={data?.orders_late ?? "–"} tone={data?.orders_late ? "red" : undefined} />
+        <Kpi
+          label="Leveransprecision"
+          value={precision != null ? precision + " %" : "–"}
+          tone={precision != null && precision >= 95 ? "green" : precision != null && precision < 80 ? "red" : undefined}
+        />
+        <Kpi label="Totalt order" value={data?.orders_total ?? "–"} />
+        <Kpi label="Schemaversion" value={data?.active_schedule_version ?? "–"} />
+      </div>
+
+      <div className="section">
+        <h2>Maskinutnyttjande & flaskhalsar</h2>
+        {util.length === 0 ? (
+          <div className="empty">
+            <div className="icon">📊</div>
+            <h3>Inget schema ännu</h3>
+            <div>Lägg upp grunddata och order, kör sedan planeringen i Gantt-vyn.</div>
           </div>
-        ))}
+        ) : (
+          <div className="card">
+            {util.map((u) => {
+              const hot = u.utilization_pct >= 85;
+              return (
+                <div key={u.machine_id} className="util-row">
+                  <div className="util-top">
+                    <span>
+                      {u.machine} {hot && <span className="flag">⚠ flaskhals</span>}
+                    </span>
+                    <span>{u.utilization_pct}%</span>
+                  </div>
+                  <div className="util-track">
+                    <div
+                      className={"util-fill" + (hot ? " hot" : "")}
+                      style={{ width: `${Math.min(u.utilization_pct, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </>
   );

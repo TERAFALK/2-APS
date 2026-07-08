@@ -44,15 +44,20 @@ export default function Gantt() {
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="page-head">
         <h1>Gantt-planering</h1>
         <button className="btn" disabled={run.isPending} onClick={() => run.mutate()}>
-          {run.isPending ? "Planerar…" : "Kör planering"}
+          {run.isPending ? "Planerar…" : "▶ Kör planering"}
         </button>
       </div>
 
-      {ops.length === 0 && <p>Inga schemalagda operationer. Skapa order och kör planering.</p>}
-
+      {ops.length === 0 ? (
+        <div className="empty">
+          <div className="icon">🗓️</div>
+          <h3>Inget schema ännu</h3>
+          <div>Skapa order och tryck <strong>Kör planering</strong> så optimerar motorn schemat.</div>
+        </div>
+      ) : (
       <div className="gantt">
         {Object.entries(byMachine).map(([machine, rows]) => (
           <div key={machine} className="gantt-row">
@@ -80,9 +85,12 @@ export default function Gantt() {
           </div>
         ))}
       </div>
-      <p style={{ color: "var(--muted)", fontSize: 13 }}>
-        Dubbelklicka på en operation för att låsa dess position inför nästa planering.
-      </p>
+      )}
+      {ops.length > 0 && (
+        <p className="subtle" style={{ marginTop: 12 }}>
+          💡 Dubbelklicka på en operation för att låsa dess position inför nästa planering (svart = låst).
+        </p>
+      )}
     </>
   );
 }
