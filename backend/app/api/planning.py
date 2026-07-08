@@ -96,26 +96,31 @@ def resize_phase(op_id: int, hours: float, start: datetime | None = None, db: Se
     op = db.get(Operation, op_id)
     if not op:
         raise HTTPException(status_code=404, detail="Fas saknas")
-    new_min = max(15, round(hours * 60))
     old_min = op.duration_minutes
+
+    # fasens oplanerade rest (samma order/sekvens/moment) — enda källan till mer tid
+    rem = db.scalar(
+        select(Operation).where(
+            Operation.order_id == op.order_id,
+            Operation.sequence == op.sequence,
+            Operation.name == op.name,
+            Operation.start_time.is_(None),
+            Operation.id != op.id,
+        )
+    )
+    rem_avail = rem.duration_minutes if rem is not None else 0
+
+    # en fas kan aldrig växa mer än vad som finns kvar oplanerat (total bevaras)
+    new_min = max(15, min(round(hours * 60), old_min + rem_avail))
+
     if start is not None:
         op.start_time = start
     op.duration_minutes = new_min
     if op.start_time:
         op.end_time = op.start_time + timedelta(minutes=new_min)
 
-    # delta > 0 = kortad tid som ska till backloggen, < 0 = förlängd (tas tillbaka från backlog)
-    delta = old_min - new_min
+    delta = old_min - new_min  # >0 = kortad (till backlog), <0 = förlängd (från backlog)
     if delta != 0:
-        rem = db.scalar(
-            select(Operation).where(
-                Operation.order_id == op.order_id,
-                Operation.sequence == op.sequence,
-                Operation.name == op.name,
-                Operation.start_time.is_(None),
-                Operation.id != op.id,
-            )
-        )
         if rem is not None:
             rem.duration_minutes += delta
             if rem.duration_minutes <= 0:
