@@ -17,10 +17,10 @@ export default function Layout() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="logo">
-          VÄNER<span>TEKNO</span>
-          <small>APS PLANNING</small>
+        <div className="logo-chip">
+          <img src="/vanertekno.svg" alt="Vänertekno" />
         </div>
+        <div className="logo-sub">APS · PRODUKTIONSPLANERING</div>
         <nav className="nav">
           {links.map((l) => (
             <NavLink key={l.to} to={l.to} end={l.end}>

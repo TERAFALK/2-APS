@@ -45,20 +45,14 @@ a { color: inherit; text-decoration: none; }
   top: 0;
   height: 100vh;
 }
-.sidebar .logo {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  margin: 4px 8px 8px;
+.logo-chip {
+  background: #fff; border-radius: 10px; padding: 12px 14px; margin: 2px 4px 4px;
+  display: flex; align-items: center; justify-content: center;
 }
-.sidebar .logo span { color: var(--red); }
-.sidebar .logo small {
-  display: block;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 2px;
-  color: var(--muted-light);
-  margin-top: 2px;
+.logo-chip img { width: 100%; height: auto; display: block; }
+.logo-sub {
+  font-size: 10px; font-weight: 700; letter-spacing: 1.5px; color: var(--muted-light);
+  margin: 2px 8px 4px; text-align: center;
 }
 .nav { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
 .nav a {
@@ -162,7 +156,35 @@ tbody tr:hover { background: #fafbfc; }
 .util-fill.hot { background: var(--red); }
 .flag { color: var(--red); font-weight: 700; font-size: 12px; }
 
-/* ---------------- Gantt ---------------- */
+/* ---------------- Gantt v2 (tidslinje) ---------------- */
+.gantt2 { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow-x: auto; overflow-y: hidden; }
+.g-canvas { position: relative; }
+.g-head { position: relative; height: 46px; border-bottom: 1px solid var(--border-strong); background: #fafbfc; }
+.g-tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--border); padding-left: 6px; font-size: 11px; color: var(--muted); display: flex; align-items: flex-end; padding-bottom: 5px; white-space: nowrap; }
+.g-tick.day { border-left: 2px solid var(--border-strong); font-weight: 700; color: var(--text); align-items: flex-start; padding-top: 5px; }
+.g-row { position: relative; height: 46px; border-bottom: 1px solid var(--border); }
+.g-row:hover { background: #fafbfc; }
+.g-rowlabel { position: sticky; left: 0; z-index: 3; width: 160px; height: 100%; display: flex; align-items: center; padding: 0 14px; font-size: 13px; font-weight: 600; background: inherit; border-right: 1px solid var(--border-strong); background-clip: padding-box; }
+.g-row .g-rowlabel { background: #fff; }
+.g-row:hover .g-rowlabel { background: #fafbfc; }
+.g-gridline { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--border); pointer-events: none; }
+.g-gridline.day { border-left: 1px solid var(--border-strong); }
+.g-now { position: absolute; top: 0; width: 2px; background: var(--red); z-index: 4; pointer-events: none; }
+.g-now::after { content: "NU"; position: absolute; top: 0; left: 2px; font-size: 9px; font-weight: 700; color: var(--red); background: #fff; padding: 0 2px; }
+.g-bar {
+  position: absolute; top: 10px; height: 26px; border-radius: 5px; color: #fff; font-size: 11px;
+  line-height: 26px; padding: 0 7px; overflow: hidden; white-space: nowrap; cursor: pointer;
+  box-shadow: var(--shadow); font-weight: 600; z-index: 2; border: 1px solid rgba(0,0,0,0.08);
+}
+.g-bar:hover { filter: brightness(1.06); z-index: 5; }
+.g-bar.ok { background: #16a34a; }
+.g-bar.running { background: #2563eb; }
+.g-bar.late { background: var(--red); }
+.g-bar.locked { background: var(--ink); }
+.legend { display: flex; gap: 16px; align-items: center; margin: 12px 2px 0; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+/* ---------------- Gantt (gammal, ej använd) ---------------- */
 .gantt { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; overflow-x: auto; box-shadow: var(--shadow); }
 .gantt-row { display: flex; align-items: center; height: 42px; }
 .gantt-row + .gantt-row { border-top: 1px solid var(--border); }
