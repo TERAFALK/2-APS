@@ -3,6 +3,10 @@
 Revision ID: 0002
 Revises: 0001
 Create Date: 2026-07-08
+
+OBS: 0001 kör create_all på hela modellen, vilket redan skapar denna tabell om modellen
+fanns vid den körningen. Därför är denna migration idempotent — den skapar tabellen bara
+om den saknas.
 """
 import sqlalchemy as sa
 from alembic import op
@@ -14,6 +18,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if "maintenance_windows" in sa.inspect(bind).get_table_names():
+        return
     op.create_table(
         "maintenance_windows",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -25,4 +32,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("maintenance_windows")
+    bind = op.get_bind()
+    if "maintenance_windows" in sa.inspect(bind).get_table_names():
+        op.drop_table("maintenance_windows")
