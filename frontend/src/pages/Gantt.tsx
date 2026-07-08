@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 
@@ -164,6 +164,26 @@ export default function Gantt() {
     }
     return Math.max(0, o.duration_minutes - work);
   };
+  // tidsintervall av blocket som ligger utanför arbetstid (för att randa bara den delen)
+  const overtimeIntervals = (o: Op): { start: number; end: number }[] => {
+    if (!o.start_time) return [];
+    const sh = shiftOf(o.machine_id); const start = new Date(o.start_time).getTime(); const end = start + o.duration_minutes * 60000;
+    const work: { a: number; b: number }[] = []; let cur = new Date(start); let guard = 0;
+    while (cur.getTime() < end && guard++ < 400) {
+      const dow = cur.getDay();
+      if (dow !== 0 && dow !== 6) {
+        const s2 = new Date(cur); s2.setHours(sh.sh, sh.sm, 0, 0);
+        const e2 = new Date(cur); e2.setHours(sh.eh, sh.em, 0, 0);
+        const a = Math.max(cur.getTime(), s2.getTime()), b = Math.min(end, e2.getTime());
+        if (b > a) work.push({ a, b });
+      }
+      const nd = new Date(cur); nd.setDate(nd.getDate() + 1); nd.setHours(0, 0, 0, 0); cur = nd;
+    }
+    const ot: { start: number; end: number }[] = []; let prev = start;
+    for (const w of work) { if (w.a > prev) ot.push({ start: prev, end: w.a }); prev = Math.max(prev, w.b); }
+    if (prev < end) ot.push({ start: prev, end });
+    return ot;
+  };
 
   const now = Date.now();
   const showNow = now >= min && now <= min + days * DAY;
@@ -182,7 +202,8 @@ export default function Gantt() {
     const byOrder: Record<number, Op[]> = {}; for (const o of scheduled) (byOrder[o.order_id] ??= []).push(o);
     const paths: { key: string; d: string }[] = [];
     for (const chain of Object.values(byOrder)) {
-      chain.sort((a, b) => a.sequence - b.sequence);
+      // sortera i TIDSORDNING så pilarna alltid går framåt, oavsett i vilken ordning faserna placerades
+      chain.sort((a, b) => new Date(a.start_time!).getTime() - new Date(b.start_time!).getTime() || a.sequence - b.sequence);
       for (let i = 0; i < chain.length - 1; i++) {
         const a = chain[i], b = chain[i + 1];
         const ri = rowIndexOf(a.machine_id), rj = rowIndexOf(b.machine_id);
@@ -408,20 +429,26 @@ export default function Gantt() {
                     ))}
                     {showNow && <div className="g-now" style={{ left: LABEL_W + xOf(now), height: ROW_H }} />}
                     {(opsByMachine[String(row.id)] ?? []).map((o) => {
-                      const segs = opSegments(o);
+                      const s = new Date(o.start_time!).getTime();
+                      const e = s + o.duration_minutes * 60000;
                       const otMin = overtimeMinutes(o);
-                      return segs.map((seg, si) => {
-                        const w = Math.max(xOf(seg.end) - xOf(seg.start), 10);
-                        return (
-                          <div key={`${o.id}-${si}`} className={"g-bar " + barClass(o) + (si > 0 ? " cont" : "") + (otMin > 0 ? " overtime" : "")}
-                            style={{ left: LABEL_W + xOf(seg.start), width: w }}
+                      const ots = otMin > 0 ? overtimeIntervals(o) : [];
+                      return (
+                        <Fragment key={o.id}>
+                          <div className={"g-bar " + barClass(o)}
+                            style={{ left: LABEL_W + xOf(s), width: Math.max(xOf(e) - xOf(s), 10) }}
                             title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt${otMin > 0 ? `\n⚠ ${fmtDur(otMin)} övertid (utanför arbetstid)` : ""}\nKlicka för status · dra för att flytta`}
-                            onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: new Date(o.start_time!).getTime(), origMachine: o.machine_id, durMin: o.duration_minutes, overtime: o.overtime })}>
-                            {si === 0 && <><span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</>}
-                            {si === segs.length - 1 && <span className="resize-handle" title="Dra för att korta fasen — resten hamnar i backloggen" onMouseDown={(ev) => beginResize(ev, o)} />}
+                            onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes, overtime: o.overtime })}>
+                            <span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />
+                            {otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}
+                            <span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}
+                            <span className="resize-handle" title="Dra för att korta fasen — resten hamnar i backloggen" onMouseDown={(ev) => beginResize(ev, o)} />
                           </div>
-                        );
-                      });
+                          {ots.map((iv, i) => (
+                            <div key={i} className="g-ot" style={{ left: LABEL_W + xOf(iv.start), width: Math.max(xOf(iv.end) - xOf(iv.start), 2) }} />
+                          ))}
+                        </Fragment>
+                      );
                     })}
                   </div>
                 );
