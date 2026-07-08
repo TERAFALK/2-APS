@@ -73,6 +73,24 @@ export const api = {
     request<any>("/machine-types", { method: "POST", body: JSON.stringify(body) }),
   addRouting: (productId: number, body: any) =>
     request<any>(`/products/${productId}/routing`, { method: "POST", body: JSON.stringify(body) }),
+
+  // --- edit / delete ---
+  updateMachineType: (id: number, body: any) =>
+    request<any>(`/machine-types/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteMachineType: (id: number) => request<void>(`/machine-types/${id}`, { method: "DELETE" }),
+  updateMachine: (id: number, body: any) =>
+    request<any>(`/machines/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteMachine: (id: number) => request<void>(`/machines/${id}`, { method: "DELETE" }),
+  updateProduct: (id: number, body: any) =>
+    request<any>(`/products/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteProduct: (id: number) => request<void>(`/products/${id}`, { method: "DELETE" }),
+  updateRouting: (pid: number, sid: number, body: any) =>
+    request<any>(`/products/${pid}/routing/${sid}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteRouting: (pid: number, sid: number) =>
+    request<void>(`/products/${pid}/routing/${sid}`, { method: "DELETE" }),
+  updateOrder: (id: number, body: any) =>
+    request<any>(`/orders/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteOrder: (id: number) => request<void>(`/orders/${id}`, { method: "DELETE" }),
 };
 
 export const isLoggedIn = () => !!token();

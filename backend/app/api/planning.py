@@ -37,6 +37,36 @@ def create_order(payload: OrderIn, db: Session = Depends(get_db)):
     return order
 
 
+@router.put("/orders/{oid}", response_model=OrderOut, dependencies=[Depends(planner)])
+def update_order(oid: int, payload: OrderIn, db: Session = Depends(get_db)):
+    order = db.get(ProductionOrder, oid)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order saknas")
+    dup = db.scalar(
+        select(ProductionOrder).where(ProductionOrder.order_no == payload.order_no, ProductionOrder.id != oid)
+    )
+    if dup:
+        raise HTTPException(status_code=409, detail="Ordernummer finns redan")
+    regenerate = payload.product_id != order.product_id or payload.quantity != order.quantity
+    for k, v in payload.model_dump().items():
+        setattr(order, k, v)
+    if regenerate:
+        for op in list(order.operations):
+            db.delete(op)
+        db.flush()
+        generate_operations_for_order(db, order)
+    db.commit(); db.refresh(order)
+    return order
+
+
+@router.delete("/orders/{oid}", status_code=204, dependencies=[Depends(planner)])
+def delete_order(oid: int, db: Session = Depends(get_db)):
+    order = db.get(ProductionOrder, oid)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order saknas")
+    db.delete(order); db.commit()  # moment kaskaderas bort
+
+
 @router.get("/operations", response_model=list[OperationOut])
 def list_operations(db: Session = Depends(get_db)):
     """Alla moment — både schemalagda (start_time satt) och backlog (utan tid)."""
