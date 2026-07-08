@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 
@@ -13,8 +13,11 @@ const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 const HEAD_H = 52;
 const ROW_H = 48;
+const BAR_TOP = 11;
 const BAR_CENTER = 24;
 const SNAP_MIN = 15;
+const SNAP_MS = SNAP_MIN * 60000;
+const DAYS = 42; // fast fönster: ingen omflödning när moment placeras
 
 const parseTime = (s?: string) => {
   if (!s) return { h: 7, m: 0 };
@@ -22,6 +25,7 @@ const parseTime = (s?: string) => {
   return { h: h || 0, m: m || 0 };
 };
 const fmtDur = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1)}h` : `${min}m`);
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 export default function Gantt() {
   const qc = useQueryClient();
@@ -57,13 +61,14 @@ export default function Gantt() {
   const scheduled = ops.filter((o) => o.start_time && o.end_time);
   const backlog = ops.filter((o) => !o.start_time);
 
-  const { min, days } = useMemo(() => {
-    const t = scheduled.flatMap((o) => [new Date(o.start_time!).getTime(), new Date(o.end_time!).getTime()]);
-    const lo = new Date(t.length ? Math.min(...t) : Date.now()); lo.setHours(0, 0, 0, 0);
-    const hi = new Date(t.length ? Math.max(...t) : Date.now() + 6 * DAY); hi.setHours(0, 0, 0, 0);
-    const dayCount = Math.max(7, Math.round((hi.getTime() - lo.getTime()) / DAY) + 1);
-    return { min: lo.getTime(), days: dayCount };
-  }, [scheduled]);
+  // FAST tidsfönster: måndag förra veckan + 6 veckor. Ändras aldrig av placeringar.
+  const min = useMemo(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    const dow = (d.getDay() + 6) % 7; // 0 = måndag
+    d.setDate(d.getDate() - dow - 7);
+    return d.getTime();
+  }, []);
+  const days = DAYS;
 
   const dayWidth = 24 * pxph;
   const widthPx = days * dayWidth;
@@ -81,7 +86,7 @@ export default function Gantt() {
       return { i, weekend: d.getDay() === 0 || d.getDay() === 6, date: d };
     }), [min, days]);
 
-  const hourStep = pxph >= 26 ? 2 : pxph >= 13 ? 4 : pxph >= 7 ? 6 : 12;
+  const hourStep = pxph >= 30 ? 2 : pxph >= 15 ? 3 : pxph >= 9 ? 6 : 12;
 
   const arrows = useMemo(() => {
     const byOrder: Record<number, Op[]> = {};
@@ -106,6 +111,7 @@ export default function Gantt() {
 
   const now = Date.now();
   const showNow = now >= min && now <= min + days * DAY;
+  const nowLabel = new Date(now).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
 
   const barClass = (o: Op) => {
     if (o.status === "running") return "running";
@@ -114,66 +120,72 @@ export default function Gantt() {
     return "ok";
   };
 
-  // ---------- drag (imperativ: ingen re-render under drag → smidigt) ----------
+  // ---------- imperativ drag med live snap-preview ----------
+  const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const ghostRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
 
-  function placeFromPointer(clientX: number, clientY: number) {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return null;
-    const idx = Math.floor((clientY - rect.top - HEAD_H) / ROW_H);
-    if (idx < 0 || idx >= rows.length) return null;
-    const xInCanvas = clientX - rect.left - LABEL_W;
-    const rawMs = min + (xInCanvas / pxph) * HOUR;
-    const snapMs = Math.round(rawMs / (SNAP_MIN * 60000)) * (SNAP_MIN * 60000);
-    return { machine: rows[idx].id, ms: snapMs };
-  }
+  // scrolla till "nu" en gång
+  const scrolled = useRef(false);
+  useEffect(() => {
+    if (!scrolled.current && scrollRef.current && showNow) {
+      scrollRef.current.scrollLeft = Math.max(0, xOf(now) - 120);
+      scrolled.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length, pxph]);
 
   function beginDrag(
     e: React.MouseEvent,
-    opt: { kind: "move"; opId: number; origMs: number; origMachine: number | null } | { kind: "new"; opId: number; label: string }
+    opt:
+      | { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number }
+      | { kind: "new"; opId: number; label: string; durMin: number }
   ) {
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
     const el = opt.kind === "move" ? (e.currentTarget as HTMLElement) : null;
-    const ghost = ghostRef.current;
+    const preview = previewRef.current;
+    const durWidth = Math.max((opt.durMin / 60) * pxph, 10);
+    const grabOffsetX = el ? startX - el.getBoundingClientRect().left : 0;
+    const origRow = opt.kind === "move" ? rowIndexOf(opt.origMachine) : 0;
+    let snap: { ms: number; machine: number | null; row: number } | null = null;
+
     if (el) el.classList.add("dragging");
-    if (opt.kind === "new" && ghost) {
-      ghost.textContent = opt.label;
-      ghost.style.display = "block";
-      ghost.style.left = startX + 12 + "px";
-      ghost.style.top = startY + 12 + "px";
-    }
     document.body.classList.add("dragging-active");
 
+    const compute = (cx: number, cy: number) => {
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const row = clamp(Math.floor((cy - rect.top - HEAD_H) / ROW_H), 0, rows.length - 1);
+      const leftClient = cx - grabOffsetX;
+      const rawMs = min + ((leftClient - rect.left - LABEL_W) / pxph) * HOUR;
+      const ms = clamp(Math.round(rawMs / SNAP_MS) * SNAP_MS, min, min + days * DAY - opt.durMin * 60000);
+      return { ms, machine: rows[row].id, row };
+    };
+
     const onMove = (ev: MouseEvent) => {
-      if (el) el.style.transform = `translate(${ev.clientX - startX}px, ${ev.clientY - startY}px)`;
-      if (opt.kind === "new" && ghost) {
-        ghost.style.left = ev.clientX + 12 + "px";
-        ghost.style.top = ev.clientY + 12 + "px";
+      snap = compute(ev.clientX, ev.clientY);
+      const left = LABEL_W + xOf(snap.ms);
+      if (preview) {
+        preview.style.display = "block";
+        preview.style.left = left + "px";
+        preview.style.top = HEAD_H + snap.row * ROW_H + BAR_TOP + "px";
+        preview.style.width = durWidth + "px";
+      }
+      if (el) {
+        const origLeft = LABEL_W + xOf(opt.kind === "move" ? opt.origMs : min);
+        el.style.transform = `translate(${left - origLeft}px, ${(snap.row - origRow) * ROW_H}px)`;
       }
     };
-    const onUp = (ev: MouseEvent) => {
+    const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       document.body.classList.remove("dragging-active");
       if (el) { el.classList.remove("dragging"); el.style.transform = ""; }
-      if (ghost) ghost.style.display = "none";
-
-      if (opt.kind === "move") {
-        const dx = ev.clientX - startX;
-        if (Math.abs(dx) < 4 && Math.abs(ev.clientY - startY) < 4) return; // klick, ingen flytt
-        const deltaMin = Math.round((dx / pxph) * 60 / SNAP_MIN) * SNAP_MIN;
-        const newMs = opt.origMs + deltaMin * 60000;
-        const drop = placeFromPointer(ev.clientX, ev.clientY);
-        const machine = drop?.machine ?? opt.origMachine;
-        schedule.mutate({ id: opt.opId, start: new Date(newMs).toISOString(), machine });
-      } else {
-        const drop = placeFromPointer(ev.clientX, ev.clientY);
-        if (drop && drop.machine != null) {
-          schedule.mutate({ id: opt.opId, start: new Date(drop.ms).toISOString(), machine: drop.machine });
-        }
-      }
+      if (preview) preview.style.display = "none";
+      if (!snap) return; // ingen rörelse
+      if (opt.kind === "move" && snap.machine === opt.origMachine && Math.abs(snap.ms - opt.origMs) < SNAP_MS) return;
+      if (snap.machine == null) return;
+      schedule.mutate({ id: opt.opId, start: new Date(snap.ms).toISOString(), machine: snap.machine });
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -206,7 +218,7 @@ export default function Gantt() {
           <div className="backlog">
             <div className="backlog-head">
               <h2 style={{ margin: 0 }}>Moment att planera ({backlog.length})</h2>
-              <span className="drop-hint">Dra ett moment till en maskinrad för att placera det.</span>
+              <span className="drop-hint">Dra ett moment till en maskinrad — den streckade rutan visar var det landar.</span>
             </div>
             {backlog.length === 0 ? (
               <div className="subtle">
@@ -215,7 +227,7 @@ export default function Gantt() {
             ) : (
               <div className="backlog-chips">
                 {backlog.map((o) => (
-                  <div key={o.id} className="chip" onMouseDown={(e) => beginDrag(e, { kind: "new", opId: o.id, label: `${orderNo(o.order_id)} · ${o.name}` })}>
+                  <div key={o.id} className="chip" onMouseDown={(e) => beginDrag(e, { kind: "new", opId: o.id, label: `${orderNo(o.order_id)} · ${o.name}`, durMin: o.duration_minutes })}>
                     <strong>{orderNo(o.order_id)}</strong> · {o.name}
                     <span className="dur">{fmtDur(o.duration_minutes)}</span>
                   </div>
@@ -224,7 +236,7 @@ export default function Gantt() {
             )}
           </div>
 
-          <div className="gantt2">
+          <div className="gantt2" ref={scrollRef}>
             <div className="g-canvas" ref={canvasRef} style={{ width: LABEL_W + widthPx, height: canvasH }}>
               {dayList.filter((d) => d.weekend).map((d) => (
                 <div key={"we" + d.i} className="g-weekend" style={{ left: LABEL_W + d.i * dayWidth, width: dayWidth, height: canvasH }} />
@@ -247,9 +259,10 @@ export default function Gantt() {
                 ))}
                 {dayList.flatMap((d) =>
                   Array.from({ length: Math.floor(24 / hourStep) + 1 }, (_, k) => k * hourStep).filter((h) => h < 24).map((h) => (
-                    <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.i * dayWidth + h * pxph }}>{String(h).padStart(2, "0")}</div>
+                    <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.i * dayWidth + h * pxph }}>{String(h).padStart(2, "0")}:00</div>
                   ))
                 )}
+                {showNow && <div className="g-nowlabel" style={{ left: LABEL_W + xOf(now) }}>nu {nowLabel}</div>}
               </div>
 
               <svg className="g-arrows" width={LABEL_W + widthPx} height={canvasH}>
@@ -260,6 +273,9 @@ export default function Gantt() {
                 </defs>
                 {arrows.map((a) => <path key={a.key} d={a.d} markerEnd="url(#arrow)" />)}
               </svg>
+
+              {/* snap-preview */}
+              <div className="g-preview" ref={previewRef} style={{ display: "none" }} />
 
               {rows.map((row, ri) => {
                 const mc = row.id != null ? machineById[row.id] : null;
@@ -277,12 +293,12 @@ export default function Gantt() {
                     {(opsByMachine[String(row.id)] ?? []).map((o) => {
                       const s = new Date(o.start_time!).getTime();
                       const e = new Date(o.end_time!).getTime();
-                      const w = Math.max(((e - s) / HOUR) * pxph, 8);
+                      const w = Math.max(((e - s) / HOUR) * pxph, 10);
                       return (
                         <div key={o.id} className={"g-bar " + barClass(o)}
                           style={{ left: LABEL_W + xOf(s), width: w }}
                           title={`${orderNo(o.order_id)} · ${o.name}\n${new Date(s).toLocaleString("sv-SE")} – ${new Date(e).toLocaleTimeString("sv-SE")}\nDra för att flytta · dubbelklick = tillbaka till backlog`}
-                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id })}
+                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes })}
                           onDoubleClick={() => unschedule.mutate(o.id)}>
                           {orderNo(o.order_id)} · {o.name}
                         </div>
@@ -304,7 +320,6 @@ export default function Gantt() {
         </>
       )}
 
-      <div className="chip-ghost" ref={ghostRef} style={{ display: "none" }} />
       {busy && <div className="replan-toast">⟳ Uppdaterar schema…</div>}
     </>
   );
