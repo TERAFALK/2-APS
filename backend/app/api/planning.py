@@ -241,6 +241,21 @@ def schedule_manual(
     if not op:
         raise HTTPException(status_code=404, detail="Moment saknas")
     if unschedule:
+        # slå ihop med fasens befintliga backlog-rest om en sådan finns (samma order/sekvens/moment)
+        rem = db.scalar(
+            select(Operation).where(
+                Operation.order_id == op.order_id,
+                Operation.sequence == op.sequence,
+                Operation.name == op.name,
+                Operation.start_time.is_(None),
+                Operation.id != op.id,
+            )
+        )
+        if rem is not None:
+            rem.duration_minutes += op.duration_minutes
+            db.delete(op)
+            db.commit(); db.refresh(rem)
+            return rem
         op.start_time = None
         op.end_time = None
         op.machine_id = None
