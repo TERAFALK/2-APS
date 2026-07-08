@@ -1,0 +1,28 @@
+# Caddy gateway — automatisk HTTPS med Let's Encrypt (auto-förnyelse).
+# Endast denna tjänst exponeras externt. Allt internt sker på docker-nätet "internal".
+
+{$DOMAIN} {
+	tls {$TLS_EMAIL}
+
+	encode gzip zstd
+
+	# API (REST) och WebSocket → FastAPI
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /ws/* {
+		reverse_proxy api:8000
+	}
+
+	# Allt annat → frontend SPA
+	handle {
+		reverse_proxy frontend:80
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
