@@ -77,11 +77,19 @@ services:
       args:
         VITE_API_BASE: /api
     restart: unless-stopped
-    networks: [internal]
+    # LABB bakom NPM: peka din proxy-host på  aps-frontend:80  (samma mönster som dina
+    # andra appar, t.ex. insight-frontend-1:80). Frontend-nginx proxar själv /api → api.
+    networks:
+      internal: {}
+      npm_proxy:
+        aliases: [aps-frontend]
 
   gateway:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Startar BARA vid kunddrift med egen TLS:  docker compose --profile tls up -d
+    # I labb bakom NPM behövs den inte — NPM pratar direkt med aps-frontend.
+    profiles: [tls]
     depends_on: [api, frontend]
     # LABB bakom NPM (NPM_MODE): inga host-portar behövs — NPM når Caddy via npm_proxy-nätet
     # på container-alias "aps-gateway:80". Sätt då SITE_ADDRESS=:80 i .env.
