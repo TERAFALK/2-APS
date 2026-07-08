@@ -68,13 +68,19 @@ export default function Gantt() {
   const schedule = useMutation({ mutationFn: (v: { id: number; start: string; machine: number | null }) => api.scheduleManual(v.id, v.start, v.machine), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
   const unschedule = useMutation({ mutationFn: (id: number) => api.unscheduleMoment(id), onSuccess: invalidate });
   const setStatus = useMutation({ mutationFn: (v: { id: number; s: string }) => api.setPhaseStatus(v.id, v.s), onSuccess: invalidate });
+  const resize = useMutation({ mutationFn: (v: { id: number; hours: number }) => api.resizePhase(v.id, v.hours), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
 
   const dueByOrder = useMemo(() => { const m: Record<number, number> = {}; for (const o of orders) m[o.id] = new Date(o.due_date).getTime(); return m; }, [orders]);
   const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
+  // fasnummer per order rankat på sekvens → delar av samma fas (samma sequence) delar nummer
   const posById = useMemo(() => {
     const byOrder: Record<number, Op[]> = {}; for (const o of ops) (byOrder[o.order_id] ??= []).push(o);
     const map: Record<number, number> = {};
-    for (const list of Object.values(byOrder)) { list.sort((a, b) => a.sequence - b.sequence); list.forEach((o, i) => (map[o.id] = i + 1)); }
+    for (const list of Object.values(byOrder)) {
+      const seqs = [...new Set(list.map((o) => o.sequence))].sort((a, b) => a - b);
+      const rank: Record<number, number> = {}; seqs.forEach((s, i) => (rank[s] = i + 1));
+      list.forEach((o) => (map[o.id] = rank[o.sequence]));
+    }
     return map;
   }, [ops]);
 
@@ -206,8 +212,32 @@ export default function Gantt() {
     window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
   }
 
+  const workedMinutes = (startMs: number, targetMs: number, sh: Shift) => {
+    let sum = 0;
+    for (const s of buildSegments(startMs, 100000, sh)) { if (s.start >= targetMs) break; sum += (Math.min(s.end, targetMs) - s.start) / 60000; }
+    return Math.max(0, sum);
+  };
+  function beginResize(e: React.MouseEvent, o: Op) {
+    e.stopPropagation(); e.preventDefault();
+    const sh = shiftOf(o.machine_id); const startMs = new Date(o.start_time!).getTime(); const ri = rowIndexOf(o.machine_id);
+    const preview = previewRef.current; let newDur = o.duration_minutes;
+    document.body.classList.add("dragging-active");
+    const onMove = (ev: MouseEvent) => {
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const targetMs = clamp(msFromX(ev.clientX - rect.left - LABEL_W), startMs + SNAP_MS, startMs + 100000 * 60000);
+      newDur = Math.max(SNAP_MIN, Math.round(workedMinutes(startMs, targetMs, sh) / SNAP_MIN) * SNAP_MIN);
+      if (preview) { const lastEnd = buildSegments(startMs, newDur, sh).at(-1)!.end; preview.style.display = "block"; preview.style.left = LABEL_W + xOf(startMs) + "px"; preview.style.width = Math.max(xOf(lastEnd) - xOf(startMs), 10) + "px"; preview.style.top = HEAD_H + ri * ROW_H + BAR_TOP + "px"; }
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("dragging-active"); if (preview) preview.style.display = "none";
+      if (newDur && Math.abs(newDur - o.duration_minutes) >= SNAP_MIN) resize.mutate({ id: o.id, hours: newDur / 60 });
+    };
+    window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
+  }
+
   const canvasH = HEAD_H + rows.length * ROW_H;
-  const busy = schedule.isPending || unschedule.isPending || setStatus.isPending;
+  const busy = schedule.isPending || unschedule.isPending || setStatus.isPending || resize.isPending;
 
   return (
     <>
@@ -294,6 +324,7 @@ export default function Gantt() {
                             title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt\nKlicka för status · dra för att flytta`}
                             onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: new Date(o.start_time!).getTime(), origMachine: o.machine_id, durMin: o.duration_minutes })}>
                             {si === 0 && <><span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</>}
+                            {si === segs.length - 1 && <span className="resize-handle" title="Dra för att korta fasen — resten hamnar i backloggen" onMouseDown={(ev) => beginResize(ev, o)} />}
                           </div>
                         );
                       });

@@ -88,6 +88,29 @@ def delete_phase(op_id: int, db: Session = Depends(get_db)):
     db.delete(op); db.commit()
 
 
+@router.post("/operations/{op_id}/resize", dependencies=[Depends(planner)])
+def resize_phase(op_id: int, hours: float, db: Session = Depends(get_db)):
+    """Ändra en placerad fas längd. Kortar man ner den blir resten en ny bit i backloggen
+    med SAMMA sekvensnummer (fasens ordning bevaras)."""
+    op = db.get(Operation, op_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Fas saknas")
+    new_min = max(15, round(hours * 60))
+    old_min = op.duration_minutes
+    op.duration_minutes = new_min
+    if op.start_time:
+        op.end_time = op.start_time + timedelta(minutes=new_min)
+    if new_min < old_min:
+        remainder = old_min - new_min
+        db.add(Operation(
+            order_id=op.order_id, sequence=op.sequence, name=op.name,
+            machine_id=op.machine_id, duration_minutes=remainder,
+            status=OperationStatus.planned,  # hamnar i backloggen (ingen starttid)
+        ))
+    db.commit()
+    return {"new_minutes": new_min}
+
+
 @router.patch("/operations/{op_id}/status", response_model=OperationOut, dependencies=[Depends(planner)])
 def set_phase_status(op_id: int, status: str, db: Session = Depends(get_db)):
     """Markera en fas som klar/försenad/pågår/återställ (planned)."""
