@@ -60,6 +60,7 @@ export default function Gantt() {
   const [pxph, setPxph] = useState(26);
   const [view, setView] = useState<"compact" | "day">("compact");
   const [hideWeekends, setHideWeekends] = useState(false);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [warn, setWarn] = useState("");
   const [popState, setPop] = useState<{ opId: number; x: number; y: number } | null>(null);
   const warnTimer = useRef<number | null>(null);
@@ -71,6 +72,7 @@ export default function Gantt() {
   const setStatus = useMutation({ mutationFn: (v: { id: number; s: string }) => api.setPhaseStatus(v.id, v.s), onSuccess: invalidate });
   const resize = useMutation({ mutationFn: (v: { id: number; hours: number; start?: string }) => api.resizePhase(v.id, v.hours, v.start), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
   const overtimeMut = useMutation({ mutationFn: (v: { id: number; value: boolean }) => api.setOvertime(v.id, v.value), onSuccess: invalidate });
+  const placePart = useMutation({ mutationFn: (v: { id: number; start: string; machine: number | null; hours: number }) => api.placePart(v.id, v.start, v.machine, v.hours), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
 
   const dueByOrder = useMemo(() => { const m: Record<number, number> = {}; for (const o of orders) m[o.id] = new Date(o.due_date).getTime(); return m; }, [orders]);
   const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
@@ -242,7 +244,11 @@ export default function Gantt() {
       document.body.classList.remove("dragging-active");
       if (el) { el.classList.remove("dragging"); el.style.transform = ""; }
       if (preview) preview.style.display = "none";
-      if (!moved) { if (opt.kind === "move") setPop({ opId: opt.opId, x: ev.clientX, y: ev.clientY }); return; }
+      if (!moved) {
+        if (opt.kind === "move") setPop({ opId: opt.opId, x: ev.clientX, y: ev.clientY });
+        else setSelectedId((prev) => (prev === opt.opId ? null : opt.opId)); // klick på chip = markera för att måla in timmar
+        return;
+      }
       if (!snap || snap.machine == null) return;
       if (opt.kind === "move" && snap.machine === opt.origMachine && Math.abs(snap.ms - opt.origMs) < SNAP_MS) return;
       schedule.mutate({ id: opt.opId, start: msToLocalIso(snap.ms), machine: snap.machine });
@@ -295,8 +301,34 @@ export default function Gantt() {
     window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
   }
 
+  // måla in timmar: en markerad fas + dra upp ett spann på en maskinrad
+  function startPaint(e: React.MouseEvent, row: { id: number }) {
+    if (selectedId == null) return;
+    if (!(e.target as HTMLElement).classList.contains("g-row")) return; // bara på tom radyta
+    e.preventDefault();
+    const sh = shiftOf(row.id); const ri = rowIndexOf(row.id); const preview = previewRef.current;
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const startMs = Math.round(msFromX(e.clientX - rect.left - LABEL_W) / SNAP_MS) * SNAP_MS;
+    let endMs = startMs + SNAP_MS;
+    document.body.classList.add("dragging-active");
+    const onMove = (ev: MouseEvent) => {
+      endMs = Math.max(startMs + SNAP_MS, Math.round(msFromX(ev.clientX - rect.left - LABEL_W) / SNAP_MS) * SNAP_MS);
+      if (preview) { preview.style.display = "block"; preview.className = "g-preview paint"; preview.style.left = LABEL_W + xOf(startMs) + "px"; preview.style.width = Math.max(xOf(endMs) - xOf(startMs), 8) + "px"; preview.style.top = HEAD_H + ri * ROW_H + BAR_TOP + "px"; }
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("dragging-active");
+      if (preview) { preview.style.display = "none"; preview.className = "g-preview"; }
+      const mins = Math.round(workedMinutes(startMs, endMs, sh) / SNAP_MIN) * SNAP_MIN;
+      if (mins >= SNAP_MIN) placePart.mutate({ id: selectedId!, start: msToLocalIso(startMs), machine: row.id, hours: mins / 60 });
+      setSelectedId(null);
+    };
+    window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
+  }
+
   const canvasH = HEAD_H + rows.length * ROW_H;
-  const busy = schedule.isPending || unschedule.isPending || setStatus.isPending || resize.isPending;
+  const selectedOp = ops.find((o) => o.id === selectedId);
+  const busy = schedule.isPending || unschedule.isPending || setStatus.isPending || resize.isPending || placePart.isPending;
 
   return (
     <>
@@ -320,14 +352,14 @@ export default function Gantt() {
           <div className="backlog">
             <div className="backlog-head">
               <h2 style={{ margin: 0 }}>Faser att planera ({backlog.length})</h2>
-              <span className="drop-hint">Dra en fas till en maskinrad. Maskin väljs där du släpper.</span>
+              <span className="drop-hint">Dra hela fasen till en rad — eller <strong>klicka</strong> för att markera och sedan <strong>måla upp</strong> timmar i schemat.</span>
             </div>
             {backlog.length === 0 ? (
               <div className="subtle">Inga oplanerade faser. Lägg till faser på en order under <strong>Order</strong>.</div>
             ) : (
               <div className="backlog-chips">
                 {backlog.map((o) => (
-                  <div key={o.id} className="chip" onMouseDown={(e) => beginDrag(e, { kind: "new", opId: o.id, durMin: o.duration_minutes })}>
+                  <div key={o.id} className={"chip" + (selectedId === o.id ? " selected" : "")} onMouseDown={(e) => beginDrag(e, { kind: "new", opId: o.id, durMin: o.duration_minutes })}>
                     <span className="seq">{posById[o.id]}</span>
                     <strong>{orderNo(o.order_id)}</strong> · {o.name}
                     <span className="dur">{fmtDur(o.duration_minutes)}</span>
@@ -337,6 +369,12 @@ export default function Gantt() {
             )}
           </div>
 
+          {selectedOp && (
+            <div className="paint-banner">
+              🖌 Markerad: <strong>{orderNo(selectedOp.order_id)} · {selectedOp.name}</strong> ({fmtDur(selectedOp.duration_minutes)} kvar) — dra upp ett tidsspann på en maskinrad för att boka in timmar.
+              <button className="linkbtn" onClick={() => setSelectedId(null)}>Avbryt</button>
+            </div>
+          )}
           <div className="gantt2" ref={scrollRef}>
             <div className="g-canvas" ref={canvasRef} style={{ width: LABEL_W + widthPx, height: canvasH }}>
               {visibleDays.filter((d) => d.week % 2 === 1).map((d) => <div key={"wk" + d.i} className="g-weekband" style={{ left: LABEL_W + d.dx, width: dayWidth, height: canvasH }} />)}
@@ -369,7 +407,7 @@ export default function Gantt() {
                 const sh = shiftOf(row.id);
                 const aS = clamp(shiftS.h + shiftS.m / 60, winStart, winEnd), aE = clamp(shiftE.h + shiftE.m / 60, winStart, winEnd);
                 return (
-                  <div key={row.id} className="g-row" style={{ top: HEAD_H + ri * ROW_H }}>
+                  <div key={row.id} className={"g-row" + (selectedId != null ? " painting" : "")} style={{ top: HEAD_H + ri * ROW_H }} onMouseDown={(e) => startPaint(e, row)}>
                     <div className="g-rowlabel"><div className="g-rowname">{row.name}</div></div>
                     {mc && aE > aS && visibleDays.filter((d) => !d.weekend).map((d) => (
                       <div key={"av" + d.i} className="g-avail" style={{ left: LABEL_W + d.dx + (aS - winStart) * pxph, width: (aE - aS) * pxph }} />

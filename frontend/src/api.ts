@@ -69,6 +69,11 @@ export const api = {
   },
 
   // manuell schemaläggning
+  placePart: (id: number, startIso: string, machineId: number | null, hours: number) => {
+    const p = new URLSearchParams({ start: startIso, hours: String(hours) });
+    if (machineId != null) p.set("machine_id", String(machineId));
+    return request<any>(`/operations/${id}/place-part?${p}`, { method: "POST" });
+  },
   scheduleManual: (id: number, startIso: string, machineId: number | null) => {
     const p = new URLSearchParams({ start: startIso });
     if (machineId != null) p.set("machine_id", String(machineId));

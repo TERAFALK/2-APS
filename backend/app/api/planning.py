@@ -130,6 +130,33 @@ def resize_phase(op_id: int, hours: float, start: datetime | None = None, db: Se
     return {"new_minutes": new_min}
 
 
+@router.post("/operations/{op_id}/place-part", dependencies=[Depends(planner)])
+def place_part(op_id: int, start: datetime, hours: float, machine_id: int | None = None, db: Session = Depends(get_db)):
+    """Boka en DEL av en backlog-fas: skapar en placerad bit på angivna timmar; resten
+    ligger kvar i backloggen (samma sekvens → ordning bevaras)."""
+    op = db.get(Operation, op_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Fas saknas")
+    part = max(15, round(hours * 60))
+    total = op.duration_minutes
+    if part >= total:
+        op.start_time = start
+        op.end_time = start + timedelta(minutes=total)
+        op.machine_id = machine_id
+        op.status = OperationStatus.planned
+        db.commit()
+        return {"placed": total, "remaining": 0}
+    op.duration_minutes = total - part  # resten kvar i backloggen
+    db.add(Operation(
+        order_id=op.order_id, sequence=op.sequence, name=op.name,
+        machine_id=machine_id, duration_minutes=part,
+        start_time=start, end_time=start + timedelta(minutes=part),
+        status=OperationStatus.planned,
+    ))
+    db.commit()
+    return {"placed": part, "remaining": total - part}
+
+
 @router.patch("/operations/{op_id}/overtime", response_model=OperationOut, dependencies=[Depends(planner)])
 def set_overtime(op_id: int, value: bool, db: Session = Depends(get_db)):
     """Tillåt att fasen körs utanför arbetstid (övertid) eller tvinga in den i arbetstid."""

@@ -181,6 +181,11 @@ tbody tr:hover { background: #fbfcfd; }
 .g-hourtick { position: absolute; top: 35px; height: 21px; font-size: 10px; font-weight: 600; color: var(--muted-light); padding-left: 3px; border-left: 1px solid var(--border); display: flex; align-items: center; }
 .g-preview { position: absolute; height: 26px; border: 2px dashed var(--slate); background: rgba(59, 68, 83, 0.14); border-radius: 5px; z-index: 8; pointer-events: none; }
 .g-preview.invalid { border-color: var(--red); background: rgba(206, 14, 45, 0.14); }
+.g-preview.paint { border-color: var(--blue); background: rgba(37, 99, 235, 0.16); }
+.g-row.painting { cursor: crosshair; }
+.g-row.painting .g-rowlabel { cursor: default; }
+.paint-banner { display: flex; align-items: center; gap: 10px; background: #eaf1ff; border: 1px solid #bfd4ff; color: #1e3a8a; border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; }
+.paint-banner .linkbtn { margin-left: auto; }
 .g-rowname { font-size: 13px; font-weight: 600; color: var(--text); }
 .g-rowtype { font-size: 11px; color: var(--muted-light); font-weight: 500; }
 .g-row.group-start { border-top: 2px solid var(--border-strong); }
@@ -189,8 +194,8 @@ tbody tr:hover { background: #fbfcfd; }
 .g-row { position: absolute; left: 0; right: 0; height: 48px; border-bottom: 1px solid var(--border); }
 .g-rowlabel { position: sticky; left: 0; z-index: 5; width: 168px; height: 100%; display: flex; align-items: center; padding: 0 16px; font-size: 13px; font-weight: 600; background: #fff; border-right: 1px solid var(--border-strong); }
 .g-row:hover .g-rowlabel { background: #fbfcfd; }
-.g-avail { position: absolute; top: 8px; height: 32px; background: var(--green-avail); border-radius: 4px; z-index: 1; }
-.g-now { position: absolute; top: 0; width: 2px; background: var(--red); z-index: 6; pointer-events: none; }
+.g-avail { position: absolute; top: 8px; height: 32px; background: var(--green-avail); border-radius: 4px; z-index: 1; pointer-events: none; }
+.g-now { position: absolute; top: 0; width: 2px; background: var(--red); z-index: 3; pointer-events: none; }
 .g-now::after { content: ""; }
 .g-bar {
   position: absolute; top: 11px; height: 26px; border-radius: 5px; color: #fff; font-size: 11px;
@@ -230,6 +235,7 @@ tbody tr:hover { background: #fbfcfd; }
   user-select: none; box-shadow: var(--shadow);
 }
 .chip:hover { background: var(--bg); }
+.chip.selected { border-color: var(--blue); border-left-color: var(--blue); box-shadow: 0 0 0 2px rgba(37,99,235,0.25); }
 .chip .dur { color: var(--muted); font-size: 12px; }
 .chip .seq { background: var(--slate); color: #fff; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
 .chip .split-btn { cursor: pointer; color: var(--muted); font-size: 14px; padding: 0 2px; border-radius: 4px; }
