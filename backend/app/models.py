@@ -41,6 +41,14 @@ class OperationStatus(str, enum.Enum):
     locked = "locked"      # manuellt låst position i schemat
     running = "running"
     done = "done"
+    delayed = "delayed"    # manuellt markerad som försenad
+
+
+class OrderPriority(str, enum.Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+    urgent = "urgent"
 
 
 # ---------------------------------------------------------------- Users / RBAC
@@ -60,8 +68,12 @@ class Customer(Base):
     __tablename__ = "customers"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), index=True)
+    customer_no: Mapped[str] = mapped_column(String(255), default="")
+    org_no: Mapped[str] = mapped_column(String(255), default="")
     contact_email: Mapped[str] = mapped_column(String(255), default="")
     contact_phone: Mapped[str] = mapped_column(String(64), default="")
+    address: Mapped[str] = mapped_column(String(255), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
     orders: Mapped[list[ProductionOrder]] = relationship(back_populates="customer")
 
 
@@ -166,7 +178,7 @@ class ProductionOrder(Base):
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), nullable=True)
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, default=1)
-    priority: Mapped[int] = mapped_column(Integer, default=100)  # lägre = viktigare
+    priority: Mapped[str] = mapped_column(String(16), default=OrderPriority.medium.value)
     due_date: Mapped[datetime] = mapped_column(DateTime)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.draft)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

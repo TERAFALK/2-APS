@@ -22,8 +22,11 @@ planner = require_roles(Role.admin, Role.planner)
 
 
 @router.get("/orders", response_model=list[OrderOut])
-def list_orders(db: Session = Depends(get_db)):
-    return db.scalars(select(ProductionOrder).order_by(ProductionOrder.priority)).all()
+def list_orders(customer_id: int | None = None, db: Session = Depends(get_db)):
+    q = select(ProductionOrder).order_by(ProductionOrder.due_date)
+    if customer_id is not None:
+        q = q.where(ProductionOrder.customer_id == customer_id)
+    return db.scalars(q).all()
 
 
 @router.post("/orders", response_model=OrderOut, dependencies=[Depends(planner)])
@@ -85,26 +88,18 @@ def delete_phase(op_id: int, db: Session = Depends(get_db)):
     db.delete(op); db.commit()
 
 
-@router.post("/operations/{op_id}/split", dependencies=[Depends(planner)])
-def split_phase(op_id: int, parts: int = 2, db: Session = Depends(get_db)):
-    """Dela en fas i lika stora delar (t.ex. 40h → 5×8h) som placeras var för sig."""
+@router.patch("/operations/{op_id}/status", response_model=OperationOut, dependencies=[Depends(planner)])
+def set_phase_status(op_id: int, status: str, db: Session = Depends(get_db)):
+    """Markera en fas som klar/försenad/pågår/återställ (planned)."""
+    allowed = {"planned", "running", "done", "delayed"}
+    if status not in allowed:
+        raise HTTPException(status_code=422, detail="Ogiltig status")
     op = db.get(Operation, op_id)
     if not op:
         raise HTTPException(status_code=404, detail="Fas saknas")
-    n = max(2, min(20, parts))
-    base = re.sub(r"\s*\(\d+/\d+\)$", "", op.name)
-    per = max(1, op.duration_minutes // n)
-    op.name = f"{base} (1/{n})"
-    op.duration_minutes = per
-    op.start_time = None; op.end_time = None; op.machine_id = op.machine_id
-    op.status = OperationStatus.planned
-    for k in range(2, n + 1):
-        db.add(Operation(
-            order_id=op.order_id, sequence=op.sequence, name=f"{base} ({k}/{n})",
-            machine_id=op.machine_id, duration_minutes=per, status=OperationStatus.planned,
-        ))
-    db.commit()
-    return {"parts": n}
+    op.status = OperationStatus(status)
+    db.commit(); db.refresh(op)
+    return op
 
 
 @router.put("/orders/{oid}", response_model=OrderOut, dependencies=[Depends(planner)])

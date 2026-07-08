@@ -27,7 +27,7 @@ def run() -> None:
         db.add(kund); db.flush()
 
         now = datetime.utcnow()
-        order = ProductionOrder(order_no="PO-5001", customer_id=kund.id, priority=10,
+        order = ProductionOrder(order_no="PO-5001", customer_id=kund.id, priority="high",
                                 due_date=now + timedelta(days=5), status=OrderStatus.released)
         db.add(order); db.flush()
 

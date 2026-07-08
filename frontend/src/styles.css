@@ -90,8 +90,8 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; }
 
 /* ---------------- Forms ---------------- */
 label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: var(--muted); }
-input, select { padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-size: 14px; font-family: inherit; background: #fff; color: var(--text); transition: border-color 0.12s, box-shadow 0.12s; }
-input:focus, select:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 3px rgba(206, 14, 45, 0.10); }
+input, select, textarea { padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-size: 14px; font-family: inherit; background: #fff; color: var(--text); transition: border-color 0.12s, box-shadow 0.12s; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 3px rgba(206, 14, 45, 0.10); }
 .form-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: end; }
 
 /* ---------------- Tables ---------------- */
@@ -111,6 +111,37 @@ tbody tr:hover { background: #fbfcfd; }
 .badge.in_progress { background: #fef3c7; color: #b45309; }
 .badge.done { background: #dcfce7; color: #15803d; }
 .badge.cancelled { background: #fee2e2; color: #b91c1c; }
+
+.badge.planned { background: #eef0f3; color: #4b5563; }
+.badge.running { background: #fef3c7; color: #b45309; }
+.badge.delayed { background: #fee2e2; color: #b91c1c; }
+.badge.locked { background: #e5e7eb; color: #111827; }
+
+/* prioritet */
+.prio { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.prio.low { background: #e5f0ff; color: #1d4ed8; }
+.prio.medium { background: #e8eaee; color: #4b5563; }
+.prio.high { background: #ffedd5; color: #c2410c; }
+.prio.urgent { background: #fee2e2; color: #b91c1c; }
+
+/* ---------------- Modal ---------------- */
+.modal-overlay { position: fixed; inset: 0; background: rgba(20, 23, 28, 0.45); display: grid; place-items: center; z-index: 200; padding: 20px; }
+.modal { background: var(--panel); border-radius: 16px; box-shadow: var(--shadow-lg); width: 460px; max-width: 100%; max-height: 90vh; overflow: auto; }
+.modal.wide { width: 720px; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); }
+.modal-head h2 { margin: 0; }
+.modal-close { background: none; border: none; font-size: 18px; color: var(--muted); cursor: pointer; }
+.modal-body { padding: 22px; }
+.modal-body .field { margin-bottom: 14px; }
+.modal-body .field input, .modal-body .field select, .modal-body .field textarea { width: 100%; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+
+/* ---------------- Popover (status i Gantt) ---------------- */
+.popover { position: fixed; z-index: 210; background: #fff; border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg); padding: 6px; min-width: 180px; }
+.popover .pop-title { font-size: 12px; color: var(--muted); padding: 6px 8px; font-weight: 600; }
+.popover button { display: flex; width: 100%; align-items: center; gap: 8px; background: none; border: none; text-align: left; padding: 8px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--text); }
+.popover button:hover { background: var(--bg); }
+.popover .dot { width: 9px; height: 9px; border-radius: 50%; }
 
 /* ---------------- Empty state ---------------- */
 .empty { text-align: center; padding: 54px 20px; color: var(--muted); background: var(--panel); border: 1px dashed var(--border-strong); border-radius: var(--radius); }
@@ -162,6 +193,9 @@ tbody tr:hover { background: #fbfcfd; }
 .g-bar.running { background: var(--blue); }
 .g-bar.late { background: var(--red); }
 .g-bar.locked { background: #111418; }
+.g-bar.done { background: var(--green); }
+.g-bar.delayed { background: var(--red); }
+.g-bar.cont { opacity: 0.9; }
 .g-bar.dragging { cursor: grabbing; opacity: 0.9; z-index: 30; box-shadow: var(--shadow-lg); }
 .g-arrows { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; overflow: visible; }
 .g-arrows path { fill: none; stroke: rgba(206,14,45,0.5); stroke-width: 1.5; }

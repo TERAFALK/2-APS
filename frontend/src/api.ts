@@ -60,7 +60,7 @@ export const api = {
   addPhase: (orderId: number, b: any) => request<any>(`/orders/${orderId}/phases`, { method: "POST", body: body(b) }),
   updatePhase: (id: number, b: any) => request<any>(`/operations/${id}`, { method: "PUT", body: body(b) }),
   deletePhase: (id: number) => request<void>(`/operations/${id}`, { method: "DELETE" }),
-  splitPhase: (id: number, parts: number) => request<any>(`/operations/${id}/split?parts=${parts}`, { method: "POST" }),
+  setPhaseStatus: (id: number, status: string) => request<any>(`/operations/${id}/status?status=${status}`, { method: "PATCH" }),
 
   // manuell schemaläggning
   scheduleManual: (id: number, startIso: string, machineId: number | null) => {

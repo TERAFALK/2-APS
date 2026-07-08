@@ -20,23 +20,36 @@ const SNAP_MS = SNAP_MIN * 60000;
 const DAYS = 28;
 
 const pad = (n: number) => String(n).padStart(2, "0");
-const parseTime = (s?: string) => {
-  if (!s) return { h: 7, m: 0 };
-  const [h, m] = s.split(":").map(Number);
-  return { h: h || 0, m: m || 0 };
-};
+const parseTime = (s?: string) => { if (!s) return { h: 7, m: 0 }; const [h, m] = s.split(":").map(Number); return { h: h || 0, m: m || 0 }; };
 const fmtDur = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1)}h` : `${min}m`);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-const msToLocalIso = (ms: number) => {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
-};
+const msToLocalIso = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`; };
 function isoWeek(d: Date) {
   const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = (t.getUTCDay() + 6) % 7;
-  t.setUTCDate(t.getUTCDate() - day + 3);
+  const day = (t.getUTCDay() + 6) % 7; t.setUTCDate(t.getUTCDate() - day + 3);
   const first = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
   return 1 + Math.round(((t.getTime() - first.getTime()) / 86400000 - 3 + ((first.getUTCDay() + 6) % 7)) / 7);
+}
+type Shift = { sh: number; sm: number; eh: number; em: number };
+// dela upp durMin (arbetsminuter) i dagssegment inom skiftet, hoppa nätter/helger
+function buildSegments(startMs: number, durMin: number, sh: Shift): { start: number; end: number }[] {
+  const dayMin = (sh.eh * 60 + sh.em) - (sh.sh * 60 + sh.sm);
+  if (dayMin <= 0) return [{ start: startMs, end: startMs + durMin * 60000 }];
+  const nextDay = (c: Date) => { const d = new Date(c); d.setDate(d.getDate() + 1); d.setHours(sh.sh, sh.sm, 0, 0); return d; };
+  let rem = durMin, guard = 0; const segs: { start: number; end: number }[] = []; let cur = new Date(startMs);
+  while (rem > 0 && guard++ < 200) {
+    const dow = cur.getDay();
+    const sStart = new Date(cur); sStart.setHours(sh.sh, sh.sm, 0, 0);
+    const sEnd = new Date(cur); sEnd.setHours(sh.eh, sh.em, 0, 0);
+    if (dow === 0 || dow === 6) { cur = nextDay(cur); continue; }
+    if (cur < sStart) cur = new Date(sStart);
+    if (cur >= sEnd) { cur = nextDay(cur); continue; }
+    const avail = (sEnd.getTime() - cur.getTime()) / 60000;
+    const use = Math.min(avail, rem);
+    segs.push({ start: cur.getTime(), end: cur.getTime() + use * 60000 });
+    rem -= use; cur = nextDay(cur);
+  }
+  return segs.length ? segs : [{ start: startMs, end: startMs + durMin * 60000 }];
 }
 
 export default function Gantt() {
@@ -47,23 +60,19 @@ export default function Gantt() {
 
   const [pxph, setPxph] = useState(22);
   const [warn, setWarn] = useState("");
+  const [pop, setPop] = useState<{ opId: number; x: number; y: number } | null>(null);
   const warnTimer = useRef<number | null>(null);
   const flashWarn = (m: string) => { setWarn(m); if (warnTimer.current) clearTimeout(warnTimer.current); warnTimer.current = window.setTimeout(() => setWarn(""), 2600); };
 
   const invalidate = () => { qc.invalidateQueries({ queryKey: ["operations"] }); qc.invalidateQueries({ queryKey: ["orders"] }); };
-  const schedule = useMutation({
-    mutationFn: (v: { id: number; start: string; machine: number | null }) => api.scheduleManual(v.id, v.start, v.machine),
-    onSuccess: invalidate, onError: (e: any) => flashWarn(e.message || "Kunde inte placera"),
-  });
+  const schedule = useMutation({ mutationFn: (v: { id: number; start: string; machine: number | null }) => api.scheduleManual(v.id, v.start, v.machine), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
   const unschedule = useMutation({ mutationFn: (id: number) => api.unscheduleMoment(id), onSuccess: invalidate });
-  const split = useMutation({ mutationFn: (v: { id: number; parts: number }) => api.splitPhase(v.id, v.parts), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
+  const setStatus = useMutation({ mutationFn: (v: { id: number; s: string }) => api.setPhaseStatus(v.id, v.s), onSuccess: invalidate });
 
   const dueByOrder = useMemo(() => { const m: Record<number, number> = {}; for (const o of orders) m[o.id] = new Date(o.due_date).getTime(); return m; }, [orders]);
   const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
-  // fasernas ordning inom sin order (1,2,3…)
   const posById = useMemo(() => {
-    const byOrder: Record<number, Op[]> = {};
-    for (const o of ops) (byOrder[o.order_id] ??= []).push(o);
+    const byOrder: Record<number, Op[]> = {}; for (const o of ops) (byOrder[o.order_id] ??= []).push(o);
     const map: Record<number, number> = {};
     for (const list of Object.values(byOrder)) { list.sort((a, b) => a.sequence - b.sequence); list.forEach((o, i) => (map[o.id] = i + 1)); }
     return map;
@@ -72,34 +81,37 @@ export default function Gantt() {
   const scheduled = ops.filter((o) => o.start_time && o.end_time);
   const backlog = ops.filter((o) => !o.start_time).sort((a, b) => a.order_id - b.order_id || a.sequence - b.sequence);
 
-  const min = useMemo(() => {
-    const d = new Date(); d.setHours(0, 0, 0, 0);
-    const dow = (d.getDay() + 6) % 7;
-    d.setDate(d.getDate() - dow - 7);
-    return d.getTime();
-  }, []);
+  const min = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow - 7); return d.getTime(); }, []);
   const days = DAYS;
   const dayWidth = 24 * pxph;
   const widthPx = days * dayWidth;
   const xOf = (ms: number) => ((ms - min) / HOUR) * pxph;
 
-  const rows = useMemo(() =>
-    [...machines].sort((a, b) => String(a.name).localeCompare(String(b.name), "sv")).map((m) => ({ id: m.id as number, name: m.name as string })),
-    [machines]);
+  const rows = useMemo(() => [...machines].sort((a, b) => String(a.name).localeCompare(String(b.name), "sv")).map((m) => ({ id: m.id as number, name: m.name as string })), [machines]);
   const rowIndexOf = (mid: number | null) => rows.findIndex((r) => r.id === mid);
+  const shiftOf = (mid: number | null): Shift => { const m = machines.find((x) => x.id === mid); const s = parseTime(m?.shift_start), e = parseTime(m?.shift_end); return { sh: s.h, sm: s.m, eh: e.h, em: e.m }; };
 
   const opsByMachine: Record<string, Op[]> = {};
   for (const o of scheduled) (opsByMachine[String(o.machine_id)] ??= []).push(o);
 
-  const dayList = useMemo(() =>
-    Array.from({ length: days }, (_, i) => {
-      const d = new Date(min + i * DAY);
-      return { i, weekend: d.getDay() === 0 || d.getDay() === 6, date: d, week: isoWeek(d), monday: (d.getDay() + 6) % 7 === 0 };
-    }), [min, days]);
+  const dayList = useMemo(() => Array.from({ length: days }, (_, i) => { const d = new Date(min + i * DAY); return { i, weekend: d.getDay() === 0 || d.getDay() === 6, date: d, week: isoWeek(d) }; }), [min, days]);
 
+  const now = Date.now();
+  const showNow = now >= min && now <= min + days * DAY;
+  const nowLabel = new Date(now).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+
+  const barClass = (o: Op) => {
+    if (o.status === "done") return "done";
+    if (o.status === "delayed") return "delayed";
+    if (o.status === "running") return "running";
+    const due = dueByOrder[o.order_id];
+    if (due && o.end_time && new Date(o.end_time).getTime() > due) return "late";
+    return "ok";
+  };
+
+  // dep-pilar (mellan fasernas första segment)
   const arrows = useMemo(() => {
-    const byOrder: Record<number, Op[]> = {};
-    for (const o of scheduled) (byOrder[o.order_id] ??= []).push(o);
+    const byOrder: Record<number, Op[]> = {}; for (const o of scheduled) (byOrder[o.order_id] ??= []).push(o);
     const paths: { key: string; d: string }[] = [];
     for (const chain of Object.values(byOrder)) {
       chain.sort((a, b) => a.sequence - b.sequence);
@@ -107,7 +119,8 @@ export default function Gantt() {
         const a = chain[i], b = chain[i + 1];
         const ri = rowIndexOf(a.machine_id), rj = rowIndexOf(b.machine_id);
         if (ri < 0 || rj < 0) continue;
-        const x1 = LABEL_W + xOf(new Date(a.end_time!).getTime()), y1 = HEAD_H + ri * ROW_H + BAR_CENTER;
+        const aEnd = buildSegments(new Date(a.start_time!).getTime(), a.duration_minutes, shiftOf(a.machine_id)).at(-1)!.end;
+        const x1 = LABEL_W + xOf(aEnd), y1 = HEAD_H + ri * ROW_H + BAR_CENTER;
         const x2 = LABEL_W + xOf(new Date(b.start_time!).getTime()), y2 = HEAD_H + rj * ROW_H + BAR_CENTER;
         const dx = Math.max(20, Math.abs(x2 - x1) / 2);
         paths.push({ key: `${a.id}-${b.id}`, d: `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}` });
@@ -116,29 +129,13 @@ export default function Gantt() {
     return paths;
   }, [scheduled, rows, min, pxph]);
 
-  const now = Date.now();
-  const showNow = now >= min && now <= min + days * DAY;
-  const nowLabel = new Date(now).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
-
-  const barClass = (o: Op) => {
-    if (o.status === "running") return "running";
-    const due = dueByOrder[o.order_id];
-    if (due && o.end_time && new Date(o.end_time).getTime() > due) return "late";
-    return "ok";
-  };
-
-  // ---------- scroll & zoom ----------
+  // scroll & zoom
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const anchorRef = useRef<number | null>(null);
   const scrolled = useRef(false);
-
-  function zoom(factor: number) {
-    const sc = scrollRef.current;
-    if (sc) anchorRef.current = min + ((sc.scrollLeft + sc.clientWidth / 2 - LABEL_W) / pxph) * HOUR;
-    setPxph((p) => clamp(Math.round(p * factor), 6, 80));
-  }
+  function zoom(f: number) { const sc = scrollRef.current; if (sc) anchorRef.current = min + ((sc.scrollLeft + sc.clientWidth / 2 - LABEL_W) / pxph) * HOUR; setPxph((p) => clamp(Math.round(p * f), 6, 80)); }
   useEffect(() => {
     const sc = scrollRef.current; if (!sc) return;
     if (anchorRef.current != null) { sc.scrollLeft = LABEL_W + ((anchorRef.current - min) / HOUR) * pxph - sc.clientWidth / 2; anchorRef.current = null; }
@@ -146,38 +143,43 @@ export default function Gantt() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pxph, rows.length]);
 
-  // ---------- drag ----------
+  // drag
   function beginDrag(e: React.MouseEvent, opt: { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number } | { kind: "new"; opId: number; durMin: number }) {
     e.preventDefault();
+    setPop(null);
     const startX = e.clientX, startY = e.clientY;
     const el = opt.kind === "move" ? (e.currentTarget as HTMLElement) : null;
     const preview = previewRef.current;
-    const durWidth = Math.max((opt.durMin / 60) * pxph, 10);
-    const grabOffsetX = el ? startX - el.getBoundingClientRect().left : 0;
     const origRow = opt.kind === "move" ? rowIndexOf(opt.origMachine) : 0;
     let snap: { ms: number; machine: number | null; row: number } | null = null;
-
-    if (el) el.classList.add("dragging");
+    let moved = false;
     document.body.classList.add("dragging-active");
 
     const compute = (cx: number, cy: number) => {
       const rect = canvasRef.current!.getBoundingClientRect();
       const row = clamp(Math.floor((cy - rect.top - HEAD_H) / ROW_H), 0, rows.length - 1);
-      const rawMs = min + ((cx - grabOffsetX - rect.left - LABEL_W) / pxph) * HOUR;
-      const ms = clamp(Math.round(rawMs / SNAP_MS) * SNAP_MS, min, min + days * DAY - opt.durMin * 60000);
+      const rawMs = min + ((cx - rect.left - LABEL_W) / pxph) * HOUR;
+      const ms = clamp(Math.round(rawMs / SNAP_MS) * SNAP_MS, min, min + days * DAY - 60000);
       return { ms, machine: rows[row].id, row };
     };
     const onMove = (ev: MouseEvent) => {
+      if (Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3) moved = true;
       snap = compute(ev.clientX, ev.clientY);
-      const left = LABEL_W + xOf(snap.ms);
-      if (preview) { preview.style.display = "block"; preview.style.left = left + "px"; preview.style.top = HEAD_H + snap.row * ROW_H + BAR_TOP + "px"; preview.style.width = durWidth + "px"; }
+      const seg0 = buildSegments(snap.ms, opt.durMin, shiftOf(snap.machine))[0];
+      const left = LABEL_W + xOf(seg0.start), w = Math.max(((seg0.end - seg0.start) / HOUR) * pxph, 10);
+      if (el) el.classList.add("dragging");
+      if (preview) { preview.style.display = "block"; preview.style.left = left + "px"; preview.style.top = HEAD_H + snap.row * ROW_H + BAR_TOP + "px"; preview.style.width = w + "px"; }
       if (el) { const origLeft = LABEL_W + xOf(opt.kind === "move" ? opt.origMs : min); el.style.transform = `translate(${left - origLeft}px, ${(snap.row - origRow) * ROW_H}px)`; }
     };
-    const onUp = () => {
+    const onUp = (ev: MouseEvent) => {
       window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
       document.body.classList.remove("dragging-active");
       if (el) { el.classList.remove("dragging"); el.style.transform = ""; }
       if (preview) preview.style.display = "none";
+      if (!moved) { // klick, ingen flytt
+        if (opt.kind === "move") setPop({ opId: opt.opId, x: ev.clientX, y: ev.clientY });
+        return;
+      }
       if (!snap || snap.machine == null) return;
       if (opt.kind === "move" && snap.machine === opt.origMachine && Math.abs(snap.ms - opt.origMs) < SNAP_MS) return;
       schedule.mutate({ id: opt.opId, start: msToLocalIso(snap.ms), machine: snap.machine });
@@ -185,13 +187,8 @@ export default function Gantt() {
     window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
   }
 
-  const askSplit = (o: Op) => {
-    const n = Number(window.prompt(`Dela "${o.name}" (${fmtDur(o.duration_minutes)}) i hur många lika delar?`, "5"));
-    if (n && n >= 2) split.mutate({ id: o.id, parts: Math.floor(n) });
-  };
-
   const canvasH = HEAD_H + rows.length * ROW_H;
-  const busy = schedule.isPending || unschedule.isPending || split.isPending;
+  const busy = schedule.isPending || unschedule.isPending || setStatus.isPending;
 
   return (
     <>
@@ -204,13 +201,13 @@ export default function Gantt() {
       </div>
 
       {rows.length === 0 ? (
-        <div className="empty"><div className="icon">🏭</div><h3>Inga maskiner</h3><div>Lägg upp maskiner under <strong>Grunddata</strong> först.</div></div>
+        <div className="empty"><div className="icon">🏭</div><h3>Inga maskiner</h3><div>Lägg upp maskiner under <strong>Inställningar</strong> först.</div></div>
       ) : (
         <>
           <div className="backlog">
             <div className="backlog-head">
               <h2 style={{ margin: 0 }}>Faser att planera ({backlog.length})</h2>
-              <span className="drop-hint">Dra en fas till en maskinrad. Långa faser kan delas med ✂.</span>
+              <span className="drop-hint">Dra en fas till en maskinrad — långa faser fylls automatiskt över arbetsdagarna.</span>
             </div>
             {backlog.length === 0 ? (
               <div className="subtle">Inga oplanerade faser. Lägg till faser på en order under <strong>Order</strong>.</div>
@@ -221,7 +218,6 @@ export default function Gantt() {
                     <span className="seq">{posById[o.id]}</span>
                     <strong>{orderNo(o.order_id)}</strong> · {o.name}
                     <span className="dur">{fmtDur(o.duration_minutes)}</span>
-                    <span className="split-btn" title="Dela fasen" onMouseDown={(e) => e.stopPropagation()} onClick={() => askSplit(o)}>✂</span>
                   </div>
                 ))}
               </div>
@@ -230,17 +226,9 @@ export default function Gantt() {
 
           <div className="gantt2" ref={scrollRef}>
             <div className="g-canvas" ref={canvasRef} style={{ width: LABEL_W + widthPx, height: canvasH }}>
-              {dayList.filter((d) => d.weekend).map((d) => (
-                <div key={"we" + d.i} className="g-weekend" style={{ left: LABEL_W + d.i * dayWidth, width: dayWidth, height: canvasH }} />
-              ))}
-              {dayList.map((d) => (
-                <div key={"dg" + d.i} className="g-daygrid" style={{ left: LABEL_W + d.i * dayWidth, height: canvasH }} />
-              ))}
-              {dayList.flatMap((d) =>
-                Array.from({ length: 23 }, (_, k) => k + 1).map((h) => (
-                  <div key={`hg${d.i}-${h}`} className="g-hourgrid" style={{ left: LABEL_W + d.i * dayWidth + h * pxph, height: canvasH }} />
-                ))
-              )}
+              {dayList.filter((d) => d.weekend).map((d) => <div key={"we" + d.i} className="g-weekend" style={{ left: LABEL_W + d.i * dayWidth, width: dayWidth, height: canvasH }} />)}
+              {dayList.map((d) => <div key={"dg" + d.i} className="g-daygrid" style={{ left: LABEL_W + d.i * dayWidth, height: canvasH }} />)}
+              {dayList.flatMap((d) => Array.from({ length: 23 }, (_, k) => k + 1).map((h) => <div key={`hg${d.i}-${h}`} className="g-hourgrid" style={{ left: LABEL_W + d.i * dayWidth + h * pxph, height: canvasH }} />))}
 
               <div className="g-head">
                 <div className="g-rowlabel" style={{ position: "absolute", zIndex: 6, height: HEAD_H }} />
@@ -250,11 +238,7 @@ export default function Gantt() {
                     <span className="dh-week">v.{d.week}</span>
                   </div>
                 ))}
-                {dayList.flatMap((d) =>
-                  Array.from({ length: 24 }, (_, h) => h).map((h) => (
-                    <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.i * dayWidth + h * pxph }}>{pad(h)}</div>
-                  ))
-                )}
+                {dayList.flatMap((d) => Array.from({ length: 24 }, (_, h) => h).map((h) => <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.i * dayWidth + h * pxph }}>{pad(h)}</div>))}
                 {showNow && <div className="g-nowlabel" style={{ left: LABEL_W + xOf(now) }}>nu {nowLabel}</div>}
               </div>
 
@@ -268,25 +252,28 @@ export default function Gantt() {
               {rows.map((row, ri) => {
                 const mc = machines.find((m) => m.id === row.id);
                 const shiftS = parseTime(mc?.shift_start), shiftE = parseTime(mc?.shift_end);
+                const sh = shiftOf(row.id);
                 return (
                   <div key={row.id} className="g-row" style={{ top: HEAD_H + ri * ROW_H }}>
                     <div className="g-rowlabel"><div className="g-rowname">{row.name}</div></div>
                     {mc && dayList.filter((d) => !d.weekend).map((d) => {
-                      const sH = d.i * 24 + shiftS.h + shiftS.m / 60, eH = d.i * 24 + shiftE.h + shiftE.m / 60;
-                      return <div key={"av" + d.i} className="g-avail" style={{ left: LABEL_W + sH * pxph, width: Math.max((eH - sH) * pxph, 0) }} />;
+                      const sHh = d.i * 24 + shiftS.h + shiftS.m / 60, eHh = d.i * 24 + shiftE.h + shiftE.m / 60;
+                      return <div key={"av" + d.i} className="g-avail" style={{ left: LABEL_W + sHh * pxph, width: Math.max((eHh - sHh) * pxph, 0) }} />;
                     })}
                     {showNow && <div className="g-now" style={{ left: LABEL_W + xOf(now), height: ROW_H }} />}
                     {(opsByMachine[String(row.id)] ?? []).map((o) => {
-                      const s = new Date(o.start_time!).getTime(), e = new Date(o.end_time!).getTime();
-                      const w = Math.max(((e - s) / HOUR) * pxph, 12);
-                      return (
-                        <div key={o.id} className={"g-bar " + barClass(o)} style={{ left: LABEL_W + xOf(s), width: w }}
-                          title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${new Date(s).toLocaleString("sv-SE")} – ${new Date(e).toLocaleTimeString("sv-SE")}\nDra = flytta · dubbelklick = tillbaka till backlog`}
-                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes })}
-                          onDoubleClick={() => unschedule.mutate(o.id)}>
-                          <span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}
-                        </div>
-                      );
+                      const segs = buildSegments(new Date(o.start_time!).getTime(), o.duration_minutes, sh);
+                      return segs.map((seg, si) => {
+                        const w = Math.max(((seg.end - seg.start) / HOUR) * pxph, 10);
+                        return (
+                          <div key={`${o.id}-${si}`} className={"g-bar " + barClass(o) + (si > 0 ? " cont" : "")}
+                            style={{ left: LABEL_W + xOf(seg.start), width: w }}
+                            title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt\nKlicka för status · dra för att flytta`}
+                            onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: new Date(o.start_time!).getTime(), origMachine: o.machine_id, durMin: o.duration_minutes })}>
+                            {si === 0 && <><span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</>}
+                          </div>
+                        );
+                      });
                     })}
                   </div>
                 );
@@ -297,12 +284,30 @@ export default function Gantt() {
           <div className="legend">
             <span><span className="swatch" style={{ background: "var(--green-avail)" }} />Arbetstid</span>
             <span><span className="swatch" style={{ background: "var(--slate)" }} />Planerad</span>
+            <span><span className="swatch" style={{ background: "#16a34a" }} />Klar</span>
             <span><span className="swatch" style={{ background: "#2563eb" }} />Pågår</span>
             <span><span className="swatch" style={{ background: "#ce0e2d" }} />Försenad</span>
-            <span style={{ marginLeft: "auto" }}>💡 Dubbelklicka på en fas för att lägga tillbaka den i backloggen · ✂ delar en lång fas.</span>
+            <span style={{ marginLeft: "auto" }}>💡 Klicka på en fas för att markera klar/försenad · dra för att flytta.</span>
           </div>
         </>
       )}
+
+      {pop && (() => {
+        const o = ops.find((x) => x.id === pop.opId);
+        return (
+          <>
+            <div style={{ position: "fixed", inset: 0, zIndex: 205 }} onMouseDown={() => setPop(null)} />
+            <div className="popover" style={{ left: Math.min(pop.x, window.innerWidth - 200), top: Math.min(pop.y, window.innerHeight - 220) }}>
+              <div className="pop-title">{o ? `${orderNo(o.order_id)} · ${o.name}` : ""}</div>
+              <button onClick={() => { setStatus.mutate({ id: pop.opId, s: "done" }); setPop(null); }}><span className="dot" style={{ background: "#16a34a" }} />Markera klar</button>
+              <button onClick={() => { setStatus.mutate({ id: pop.opId, s: "delayed" }); setPop(null); }}><span className="dot" style={{ background: "#ce0e2d" }} />Markera försenad</button>
+              <button onClick={() => { setStatus.mutate({ id: pop.opId, s: "running" }); setPop(null); }}><span className="dot" style={{ background: "#2563eb" }} />Markera pågår</button>
+              <button onClick={() => { setStatus.mutate({ id: pop.opId, s: "planned" }); setPop(null); }}><span className="dot" style={{ background: "#94a3b8" }} />Återställ status</button>
+              <button onClick={() => { unschedule.mutate(pop.opId); setPop(null); }}><span className="dot" style={{ background: "#111418" }} />Tillbaka till backlog</button>
+            </div>
+          </>
+        );
+      })()}
 
       {warn && <div className="replan-toast warn">⚠ {warn}</div>}
       {busy && !warn && <div className="replan-toast">⟳ Uppdaterar schema…</div>}

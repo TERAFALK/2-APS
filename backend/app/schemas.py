@@ -4,7 +4,7 @@ from datetime import datetime, time
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
-from app.models import OperationStatus, OrderStatus, Role
+from app.models import OperationStatus, OrderPriority, OrderStatus, Role
 
 
 class ORMBase(BaseModel):
@@ -36,8 +36,12 @@ class UserCreate(BaseModel):
 # --- master data ---
 class CustomerIn(BaseModel):
     name: str
+    customer_no: str = ""
+    org_no: str = ""
     contact_email: str = ""
     contact_phone: str = ""
+    address: str = ""
+    notes: str = ""
 
 
 class CustomerOut(ORMBase, CustomerIn):
@@ -101,7 +105,7 @@ class MachineOut(ORMBase, MachineIn):
 class OrderIn(BaseModel):
     order_no: str
     customer_id: int | None = None
-    priority: int = 100
+    priority: OrderPriority = OrderPriority.medium
     due_date: datetime
 
 
@@ -109,7 +113,7 @@ class OrderOut(ORMBase):
     id: int
     order_no: str
     customer_id: int | None
-    priority: int
+    priority: OrderPriority
     due_date: datetime
     status: OrderStatus
 

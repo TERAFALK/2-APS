@@ -9,7 +9,8 @@ import Layout from "./pages/Layout";
 import Dashboard from "./pages/Dashboard";
 import Gantt from "./pages/Gantt";
 import Orders from "./pages/Orders";
-import MasterData from "./pages/MasterData";
+import Customers from "./pages/Customers";
+import Settings from "./pages/Settings";
 import "./styles.css";
 
 const qc = new QueryClient();
@@ -35,7 +36,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route index element={<Dashboard />} />
             <Route path="gantt" element={<Gantt />} />
             <Route path="orders" element={<Orders />} />
-            <Route path="masterdata" element={<MasterData />} />
+            <Route path="customers" element={<Customers />} />
+            <Route path="settings" element={<Settings />} />
           </Route>
         </Routes>
       </BrowserRouter>
