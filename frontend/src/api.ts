@@ -61,7 +61,12 @@ export const api = {
   updatePhase: (id: number, b: any) => request<any>(`/operations/${id}`, { method: "PUT", body: body(b) }),
   deletePhase: (id: number) => request<void>(`/operations/${id}`, { method: "DELETE" }),
   setPhaseStatus: (id: number, status: string) => request<any>(`/operations/${id}/status?status=${status}`, { method: "PATCH" }),
-  resizePhase: (id: number, hours: number) => request<any>(`/operations/${id}/resize?hours=${hours}`, { method: "POST" }),
+  setOvertime: (id: number, value: boolean) => request<any>(`/operations/${id}/overtime?value=${value}`, { method: "PATCH" }),
+  resizePhase: (id: number, hours: number, startIso?: string) => {
+    const p = new URLSearchParams({ hours: String(hours) });
+    if (startIso) p.set("start", startIso);
+    return request<any>(`/operations/${id}/resize?${p}`, { method: "POST" });
+  },
 
   // manuell schemaläggning
   scheduleManual: (id: number, startIso: string, machineId: number | null) => {

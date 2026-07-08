@@ -134,6 +134,7 @@ class OperationOut(ORMBase):
     start_time: datetime | None
     end_time: datetime | None
     duration_minutes: int
+    overtime: bool = False
     status: OperationStatus
 
 

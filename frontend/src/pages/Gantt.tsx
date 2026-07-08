@@ -5,7 +5,7 @@ import { api } from "../api";
 type Op = {
   id: number; order_id: number; name: string; sequence: number;
   machine_id: number | null; start_time: string | null; end_time: string | null;
-  status: string; duration_minutes: number;
+  status: string; duration_minutes: number; overtime: boolean;
 };
 
 const LABEL_W = 150;
@@ -59,6 +59,7 @@ export default function Gantt() {
 
   const [pxph, setPxph] = useState(26);
   const [view, setView] = useState<"compact" | "day">("compact");
+  const [hideWeekends, setHideWeekends] = useState(false);
   const [warn, setWarn] = useState("");
   const [popState, setPop] = useState<{ opId: number; x: number; y: number } | null>(null);
   const warnTimer = useRef<number | null>(null);
@@ -68,7 +69,8 @@ export default function Gantt() {
   const schedule = useMutation({ mutationFn: (v: { id: number; start: string; machine: number | null }) => api.scheduleManual(v.id, v.start, v.machine), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
   const unschedule = useMutation({ mutationFn: (id: number) => api.unscheduleMoment(id), onSuccess: invalidate });
   const setStatus = useMutation({ mutationFn: (v: { id: number; s: string }) => api.setPhaseStatus(v.id, v.s), onSuccess: invalidate });
-  const resize = useMutation({ mutationFn: (v: { id: number; hours: number }) => api.resizePhase(v.id, v.hours), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
+  const resize = useMutation({ mutationFn: (v: { id: number; hours: number; start?: string }) => api.resizePhase(v.id, v.hours, v.start), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
+  const overtimeMut = useMutation({ mutationFn: (v: { id: number; value: boolean }) => api.setOvertime(v.id, v.value), onSuccess: invalidate });
 
   const dueByOrder = useMemo(() => { const m: Record<number, number> = {}; for (const o of orders) m[o.id] = new Date(o.due_date).getTime(); return m; }, [orders]);
   const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
@@ -101,18 +103,30 @@ export default function Gantt() {
   const winEnd = view === "day" ? 24 : clamp(Math.ceil(bounds.e + 1), winStart + 1, 24);
   const visHours = winEnd - winStart;
   const dayWidth = visHours * pxph;
-  const widthPx = days * dayWidth;
+
+  // kolumn-layout: dölj ev. helger genom att inte ge dem en kolumn
+  const cols = useMemo(() => {
+    const arr: number[] = []; const colToDay: number[] = []; let col = 0;
+    for (let i = 0; i < days; i++) {
+      arr[i] = col;
+      const wd = new Date(min + i * DAY).getDay();
+      const we = wd === 0 || wd === 6;
+      if (!(hideWeekends && we)) { colToDay[col] = i; col++; }
+    }
+    return { arr, total: col || 1, colToDay };
+  }, [min, days, hideWeekends]);
+  const widthPx = cols.total * dayWidth;
 
   const xOf = (ms: number) => {
-    const di = Math.floor((ms - min) / DAY);
-    const hInDay = (ms - (min + di * DAY)) / HOUR;
-    const h = clamp(hInDay, winStart, winEnd);
-    return di * dayWidth + (h - winStart) * pxph;
+    const di = clamp(Math.floor((ms - min) / DAY), 0, days - 1);
+    const base = cols.arr[di] * dayWidth;
+    const h = clamp((ms - (min + di * DAY)) / HOUR, winStart, winEnd);
+    return base + (h - winStart) * pxph;
   };
-  const msFromX = (xTimeline: number) => {
-    const di = clamp(Math.floor(xTimeline / dayWidth), 0, days - 1);
-    const within = xTimeline - di * dayWidth;
-    const h = clamp(winStart + within / pxph, winStart, winEnd);
+  const msFromX = (x: number) => {
+    const col = clamp(Math.floor(x / dayWidth), 0, cols.total - 1);
+    const di = cols.colToDay[col] ?? 0;
+    const h = clamp(winStart + (x - col * dayWidth) / pxph, winStart, winEnd);
     return min + di * DAY + h * HOUR;
   };
 
@@ -123,8 +137,32 @@ export default function Gantt() {
   const opsByMachine: Record<string, Op[]> = {};
   for (const o of scheduled) (opsByMachine[String(o.machine_id)] ??= []).push(o);
 
-  const dayList = useMemo(() => Array.from({ length: days }, (_, i) => { const d = new Date(min + i * DAY); return { i, weekend: d.getDay() === 0 || d.getDay() === 6, date: d, week: isoWeek(d) }; }), [min, days]);
+  const dayList = useMemo(() => Array.from({ length: days }, (_, i) => { const d = new Date(min + i * DAY); const monday = (d.getDay() + 6) % 7 === 0; return { i, weekend: d.getDay() === 0 || d.getDay() === 6, date: d, week: isoWeek(d), monday, dx: cols.arr[i] * dayWidth }; }), [min, days, cols, dayWidth]);
+  const visibleDays = useMemo(() => dayList.filter((d) => !(hideWeekends && d.weekend)), [dayList, hideWeekends]);
   const hourList = useMemo(() => { const hs: number[] = []; for (let h = Math.ceil(winStart); h < winEnd; h++) hs.push(h); return hs; }, [winStart, winEnd]);
+
+  // segment per fas: övertid = ett sammanhängande block, annars utlagt över arbetstiden
+  const opSegments = (o: Op): { start: number; end: number }[] => {
+    const s = new Date(o.start_time!).getTime();
+    if (o.overtime) return [{ start: s, end: s + o.duration_minutes * 60000 }];
+    return buildSegments(s, o.duration_minutes, shiftOf(o.machine_id));
+  };
+  const overtimeMinutes = (o: Op): number => {
+    if (!o.overtime || !o.start_time) return 0;
+    const sh = shiftOf(o.machine_id); const start = new Date(o.start_time).getTime(); const end = start + o.duration_minutes * 60000;
+    let work = 0, guard = 0; let cur = new Date(start);
+    while (cur.getTime() < end && guard++ < 400) {
+      const dow = cur.getDay();
+      if (dow !== 0 && dow !== 6) {
+        const s2 = new Date(cur); s2.setHours(sh.sh, sh.sm, 0, 0);
+        const e2 = new Date(cur); e2.setHours(sh.eh, sh.em, 0, 0);
+        const a = Math.max(cur.getTime(), s2.getTime()), b = Math.min(end, e2.getTime());
+        if (b > a) work += (b - a) / 60000;
+      }
+      const nd = new Date(cur); nd.setDate(nd.getDate() + 1); nd.setHours(0, 0, 0, 0); cur = nd;
+    }
+    return Math.max(0, o.duration_minutes - work);
+  };
 
   const now = Date.now();
   const showNow = now >= min && now <= min + days * DAY;
@@ -235,6 +273,27 @@ export default function Gantt() {
     };
     window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
   }
+  // vänsterhandtag: korta fasen från början (starten flyttas fram, resten till backlog)
+  function beginResizeStart(e: React.MouseEvent, o: Op) {
+    e.stopPropagation(); e.preventDefault();
+    const sh = shiftOf(o.machine_id); const startMs = new Date(o.start_time!).getTime(); const ri = rowIndexOf(o.machine_id);
+    const origEnd = buildSegments(startMs, o.duration_minutes, sh).at(-1)!.end;
+    const preview = previewRef.current; let newStart = startMs, newDur = o.duration_minutes;
+    document.body.classList.add("dragging-active");
+    const onMove = (ev: MouseEvent) => {
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const raw = msFromX(ev.clientX - rect.left - LABEL_W);
+      newStart = clamp(Math.round(raw / SNAP_MS) * SNAP_MS, min, origEnd - SNAP_MS);
+      newDur = Math.max(SNAP_MIN, Math.round(workedMinutes(newStart, origEnd, sh) / SNAP_MIN) * SNAP_MIN);
+      if (preview) { preview.style.display = "block"; preview.style.left = LABEL_W + xOf(newStart) + "px"; preview.style.width = Math.max(xOf(origEnd) - xOf(newStart), 10) + "px"; preview.style.top = HEAD_H + ri * ROW_H + BAR_TOP + "px"; }
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("dragging-active"); if (preview) preview.style.display = "none";
+      if (Math.abs(newStart - startMs) >= SNAP_MS) resize.mutate({ id: o.id, hours: newDur / 60, start: msToLocalIso(newStart) });
+    };
+    window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
+  }
 
   const canvasH = HEAD_H + rows.length * ROW_H;
   const busy = schedule.isPending || unschedule.isPending || setStatus.isPending || resize.isPending;
@@ -248,6 +307,7 @@ export default function Gantt() {
             <button className={view === "compact" ? "active" : ""} onClick={() => { captureAnchor(); setView("compact"); }}>Arbetstid</button>
             <button className={view === "day" ? "active" : ""} onClick={() => { captureAnchor(); setView("day"); }}>Hela dygn</button>
           </div>
+          <button className={"btn secondary" + (hideWeekends ? " on" : "")} onClick={() => { captureAnchor(); setHideWeekends((v) => !v); }}>{hideWeekends ? "Visa helger" : "Dölj helger"}</button>
           <button className="iconbtn" title="Zooma ut" onClick={() => { captureAnchor(); setPxph((p) => clamp(Math.round(p / 1.4), 6, 90)); }}>−</button>
           <button className="iconbtn" title="Zooma in" onClick={() => { captureAnchor(); setPxph((p) => clamp(Math.round(p * 1.4), 6, 90)); }}>+</button>
         </div>
@@ -279,19 +339,20 @@ export default function Gantt() {
 
           <div className="gantt2" ref={scrollRef}>
             <div className="g-canvas" ref={canvasRef} style={{ width: LABEL_W + widthPx, height: canvasH }}>
-              {dayList.filter((d) => d.weekend).map((d) => <div key={"we" + d.i} className="g-weekend" style={{ left: LABEL_W + d.i * dayWidth, width: dayWidth, height: canvasH }} />)}
-              {dayList.map((d) => <div key={"dg" + d.i} className="g-daygrid" style={{ left: LABEL_W + d.i * dayWidth, height: canvasH }} />)}
-              {dayList.flatMap((d) => hourList.map((h) => <div key={`hg${d.i}-${h}`} className="g-hourgrid" style={{ left: LABEL_W + d.i * dayWidth + (h - winStart) * pxph, height: canvasH }} />))}
+              {visibleDays.filter((d) => d.week % 2 === 1).map((d) => <div key={"wk" + d.i} className="g-weekband" style={{ left: LABEL_W + d.dx, width: dayWidth, height: canvasH }} />)}
+              {!hideWeekends && visibleDays.filter((d) => d.weekend).map((d) => <div key={"we" + d.i} className="g-weekend" style={{ left: LABEL_W + d.dx, width: dayWidth, height: canvasH }} />)}
+              {visibleDays.map((d) => <div key={"dg" + d.i} className={"g-daygrid" + (d.monday ? " g-weekstart" : "")} style={{ left: LABEL_W + d.dx, height: canvasH }} />)}
+              {visibleDays.flatMap((d) => hourList.map((h) => <div key={`hg${d.i}-${h}`} className="g-hourgrid" style={{ left: LABEL_W + d.dx + (h - winStart) * pxph, height: canvasH }} />))}
 
               <div className="g-head">
                 <div className="g-rowlabel" style={{ position: "absolute", zIndex: 6, height: HEAD_H }} />
-                {dayList.map((d) => (
-                  <div key={"dh" + d.i} className={"g-dayhead" + (d.weekend ? " weekend" : "")} style={{ left: LABEL_W + d.i * dayWidth, width: dayWidth }}>
+                {visibleDays.map((d) => (
+                  <div key={"dh" + d.i} className={"g-dayhead" + (d.weekend ? " weekend" : "") + (d.monday ? " g-weekstart" : "")} style={{ left: LABEL_W + d.dx, width: dayWidth }}>
                     <span className="dh-date">{d.date.toLocaleDateString("sv-SE", { weekday: "short", day: "numeric", month: "short" })}</span>
                     <span className="dh-week">v.{d.week}</span>
                   </div>
                 ))}
-                {dayList.flatMap((d) => hourList.map((h) => <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.i * dayWidth + (h - winStart) * pxph }}>{pad(h)}</div>))}
+                {visibleDays.flatMap((d) => hourList.map((h) => <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.dx + (h - winStart) * pxph }}>{pad(h)}</div>))}
                 {showNow && <div className="g-nowlabel" style={{ left: LABEL_W + xOf(now) }}>nu {nowLabel}</div>}
               </div>
 
@@ -310,20 +371,21 @@ export default function Gantt() {
                 return (
                   <div key={row.id} className="g-row" style={{ top: HEAD_H + ri * ROW_H }}>
                     <div className="g-rowlabel"><div className="g-rowname">{row.name}</div></div>
-                    {mc && aE > aS && dayList.filter((d) => !d.weekend).map((d) => (
-                      <div key={"av" + d.i} className="g-avail" style={{ left: LABEL_W + d.i * dayWidth + (aS - winStart) * pxph, width: (aE - aS) * pxph }} />
+                    {mc && aE > aS && visibleDays.filter((d) => !d.weekend).map((d) => (
+                      <div key={"av" + d.i} className="g-avail" style={{ left: LABEL_W + d.dx + (aS - winStart) * pxph, width: (aE - aS) * pxph }} />
                     ))}
                     {showNow && <div className="g-now" style={{ left: LABEL_W + xOf(now), height: ROW_H }} />}
                     {(opsByMachine[String(row.id)] ?? []).map((o) => {
-                      const segs = buildSegments(new Date(o.start_time!).getTime(), o.duration_minutes, sh);
+                      const segs = opSegments(o);
+                      const otMin = overtimeMinutes(o);
                       return segs.map((seg, si) => {
                         const w = Math.max(xOf(seg.end) - xOf(seg.start), 10);
                         return (
-                          <div key={`${o.id}-${si}`} className={"g-bar " + barClass(o) + (si > 0 ? " cont" : "")}
+                          <div key={`${o.id}-${si}`} className={"g-bar " + barClass(o) + (si > 0 ? " cont" : "") + (otMin > 0 ? " overtime" : "")}
                             style={{ left: LABEL_W + xOf(seg.start), width: w }}
-                            title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt\nKlicka för status · dra för att flytta`}
+                            title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt${otMin > 0 ? `\n⚠ ${fmtDur(otMin)} övertid (utanför arbetstid)` : ""}\nKlicka för status · dra för att flytta`}
                             onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: new Date(o.start_time!).getTime(), origMachine: o.machine_id, durMin: o.duration_minutes })}>
-                            {si === 0 && <><span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</>}
+                            {si === 0 && <><span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</>}
                             {si === segs.length - 1 && <span className="resize-handle" title="Dra för att korta fasen — resten hamnar i backloggen" onMouseDown={(ev) => beginResize(ev, o)} />}
                           </div>
                         );
@@ -341,7 +403,8 @@ export default function Gantt() {
             <span><span className="swatch" style={{ background: "#16a34a" }} />Klar</span>
             <span><span className="swatch" style={{ background: "#2563eb" }} />Pågår</span>
             <span><span className="swatch" style={{ background: "#ce0e2d" }} />Försenad</span>
-            <span style={{ marginLeft: "auto" }}>💡 Klicka på en fas för status · dra för att flytta.</span>
+            <span><span className="swatch ot" />⚠ Övertid</span>
+            <span style={{ marginLeft: "auto" }}>💡 Klicka på en fas för status/övertid · dra för att flytta.</span>
           </div>
         </>
       )}
@@ -357,6 +420,7 @@ export default function Gantt() {
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "delayed" }); setPop(null); }}><span className="dot" style={{ background: "#ce0e2d" }} />Markera försenad</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "running" }); setPop(null); }}><span className="dot" style={{ background: "#2563eb" }} />Markera pågår</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "planned" }); setPop(null); }}><span className="dot" style={{ background: "#94a3b8" }} />Återställ status</button>
+              {o && <button onClick={() => { overtimeMut.mutate({ id: popState.opId, value: !o.overtime }); setPop(null); }}><span className="dot" style={{ background: "#d97706" }} />{o.overtime ? "Kräv arbetstid" : "Tillåt övertid"}</button>}
               <button onClick={() => { unschedule.mutate(popState.opId); setPop(null); }}><span className="dot" style={{ background: "#111418" }} />Tillbaka till backlog</button>
             </div>
           </>

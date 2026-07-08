@@ -16,6 +16,7 @@ export default function Dashboard() {
 
   const precision = data?.delivery_precision_pct;
   const avgLoad = load.length ? Math.round(load.reduce((s, m) => s + m.load_pct, 0) / load.length) : null;
+  const totalOt = load.reduce((s, m) => s + (m.overtime_h || 0), 0);
 
   return (
     <>
@@ -30,6 +31,7 @@ export default function Dashboard() {
         <Kpi label="Försenade order" value={data?.orders_late ?? "–"} tone={data?.orders_late ? "red" : undefined} />
         <Kpi label="Leveransprecision" value={precision != null ? precision + " %" : "–"} tone={precision != null && precision >= 95 ? "green" : precision != null && precision < 80 ? "red" : undefined} />
         <Kpi label="Snittbeläggning" value={avgLoad != null ? avgLoad + " %" : "–"} tone={avgLoad != null && avgLoad >= 90 ? "red" : undefined} />
+        <Kpi label="Övertid denna vecka" value={totalOt > 0 ? totalOt.toFixed(1) + " h" : "0 h"} tone={totalOt > 0 ? "red" : undefined} />
       </div>
 
       <div className="section">
@@ -44,7 +46,10 @@ export default function Dashboard() {
               return (
                 <div key={m.machine_id} className="util-row">
                   <div className="util-top">
-                    <span>{m.machine} <span className="subtle">· {m.busy_h}h bokat, {m.free_h}h ledigt</span></span>
+                    <span>
+                      {m.machine} <span className="subtle">· {m.busy_h}h bokat, {m.free_h}h ledigt</span>
+                      {m.overtime_h > 0 && <span className="ot-tag">⚠ {m.overtime_h}h övertid</span>}
+                    </span>
                     <span style={{ fontWeight: 700, color: hot ? "var(--red)" : undefined }}>{m.load_pct}%</span>
                   </div>
                   <div className="util-track">

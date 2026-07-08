@@ -89,26 +89,58 @@ def delete_phase(op_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/operations/{op_id}/resize", dependencies=[Depends(planner)])
-def resize_phase(op_id: int, hours: float, db: Session = Depends(get_db)):
-    """Ändra en placerad fas längd. Kortar man ner den blir resten en ny bit i backloggen
-    med SAMMA sekvensnummer (fasens ordning bevaras)."""
+def resize_phase(op_id: int, hours: float, start: datetime | None = None, db: Session = Depends(get_db)):
+    """Ändra en placerad fas längd (via höger- eller vänsterhandtag). Kortad tid hamnar i
+    backloggen med SAMMA sekvensnummer (fasens ordning bevaras). start sätts när man drar
+    i vänsterkanten så att fasen kortas från början."""
     op = db.get(Operation, op_id)
     if not op:
         raise HTTPException(status_code=404, detail="Fas saknas")
     new_min = max(15, round(hours * 60))
     old_min = op.duration_minutes
+    if start is not None:
+        op.start_time = start
     op.duration_minutes = new_min
     if op.start_time:
         op.end_time = op.start_time + timedelta(minutes=new_min)
-    if new_min < old_min:
-        remainder = old_min - new_min
-        db.add(Operation(
-            order_id=op.order_id, sequence=op.sequence, name=op.name,
-            machine_id=op.machine_id, duration_minutes=remainder,
-            status=OperationStatus.planned,  # hamnar i backloggen (ingen starttid)
-        ))
+
+    # delta > 0 = kortad tid som ska till backloggen, < 0 = förlängd (tas tillbaka från backlog)
+    delta = old_min - new_min
+    if delta != 0:
+        rem = db.scalar(
+            select(Operation).where(
+                Operation.order_id == op.order_id,
+                Operation.sequence == op.sequence,
+                Operation.name == op.name,
+                Operation.start_time.is_(None),
+                Operation.id != op.id,
+            )
+        )
+        if rem is not None:
+            rem.duration_minutes += delta
+            if rem.duration_minutes <= 0:
+                db.delete(rem)
+        elif delta > 0:
+            db.add(Operation(
+                order_id=op.order_id, sequence=op.sequence, name=op.name,
+                machine_id=op.machine_id, duration_minutes=delta,
+                status=OperationStatus.planned,  # backlog (ingen starttid)
+            ))
     db.commit()
     return {"new_minutes": new_min}
+
+
+@router.patch("/operations/{op_id}/overtime", response_model=OperationOut, dependencies=[Depends(planner)])
+def set_overtime(op_id: int, value: bool, db: Session = Depends(get_db)):
+    """Tillåt att fasen körs utanför arbetstid (övertid) eller tvinga in den i arbetstid."""
+    op = db.get(Operation, op_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Fas saknas")
+    op.overtime = value
+    if op.start_time:
+        op.end_time = op.start_time + timedelta(minutes=op.duration_minutes)
+    db.commit(); db.refresh(op)
+    return op
 
 
 @router.patch("/operations/{op_id}/status", response_model=OperationOut, dependencies=[Depends(planner)])

@@ -41,9 +41,27 @@ def bottlenecks(db: Session, threshold_pct: float = 85.0) -> list[dict]:
     return [u for u in machine_utilization(db) if u["utilization_pct"] >= threshold_pct]
 
 
+def _overtime_min(start, dur_min: int, m: Machine) -> float:
+    """Minuter av en sammanhängande bokning som ligger utanför maskinens skift (övertid)."""
+    from datetime import timedelta
+    end = start + timedelta(minutes=dur_min)
+    work = 0.0
+    cur = start
+    guard = 0
+    while cur < end and guard < 400:
+        guard += 1
+        if cur.weekday() < 5:
+            s = cur.replace(hour=m.shift_start.hour, minute=m.shift_start.minute, second=0, microsecond=0)
+            e = cur.replace(hour=m.shift_end.hour, minute=m.shift_end.minute, second=0, microsecond=0)
+            a = max(cur, s); b = min(end, e)
+            if b > a:
+                work += (b - a).total_seconds() / 60
+        cur = (cur + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(0.0, dur_min - work)
+
+
 def current_load(db: Session) -> list[dict]:
-    """Beläggningsgrad denna vecka per maskin: planerade timmar / tillgänglig arbetstid.
-    Låter produktionsledningen se hur mycket kapacitet som är kvar för akutjobb."""
+    """Beläggningsgrad denna vecka per maskin + övertidstimmar."""
     from datetime import datetime, timedelta
 
     now = datetime.utcnow()
@@ -61,10 +79,11 @@ def current_load(db: Session) -> list[dict]:
 
     result = []
     for m in machines:
-        # tillgänglig arbetstid mån–fre utifrån skift
         shift_min = (m.shift_end.hour * 60 + m.shift_end.minute) - (m.shift_start.hour * 60 + m.shift_start.minute)
         capacity = max(1, shift_min * 5)
-        busy = sum(o.duration_minutes for o in ops if o.machine_id == m.id)
+        m_ops = [o for o in ops if o.machine_id == m.id]
+        busy = sum(o.duration_minutes for o in m_ops)
+        overtime = sum(_overtime_min(o.start_time, o.duration_minutes, m) for o in m_ops if o.overtime)
         result.append({
             "machine": m.name,
             "machine_id": m.id,
@@ -72,6 +91,7 @@ def current_load(db: Session) -> list[dict]:
             "busy_h": round(busy / 60, 1),
             "capacity_h": round(capacity / 60, 1),
             "free_h": round(max(0, capacity - busy) / 60, 1),
+            "overtime_h": round(overtime / 60, 1),
         })
     result.sort(key=lambda x: x["load_pct"], reverse=True)
     return result

@@ -228,6 +228,7 @@ class Operation(Base):
     start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    overtime: Mapped[bool] = mapped_column(Boolean, default=False)  # bokad utanför arbetstid
     status: Mapped[OperationStatus] = mapped_column(
         Enum(OperationStatus), default=OperationStatus.planned
     )
