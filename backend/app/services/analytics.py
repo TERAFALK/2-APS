@@ -83,7 +83,7 @@ def current_load(db: Session) -> list[dict]:
         capacity = max(1, shift_min * 5)
         m_ops = [o for o in ops if o.machine_id == m.id]
         busy = sum(o.duration_minutes for o in m_ops)
-        overtime = sum(_overtime_min(o.start_time, o.duration_minutes, m) for o in m_ops if o.overtime)
+        overtime = sum(_overtime_min(o.start_time, o.duration_minutes, m) for o in m_ops)
         result.append({
             "machine": m.name,
             "machine_id": m.id,

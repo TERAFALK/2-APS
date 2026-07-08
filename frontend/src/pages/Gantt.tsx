@@ -71,7 +71,6 @@ export default function Gantt() {
   const unschedule = useMutation({ mutationFn: (id: number) => api.unscheduleMoment(id), onSuccess: invalidate });
   const setStatus = useMutation({ mutationFn: (v: { id: number; s: string }) => api.setPhaseStatus(v.id, v.s), onSuccess: invalidate });
   const resize = useMutation({ mutationFn: (v: { id: number; hours: number; start?: string }) => api.resizePhase(v.id, v.hours, v.start), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
-  const overtimeMut = useMutation({ mutationFn: (v: { id: number; value: boolean }) => api.setOvertime(v.id, v.value), onSuccess: invalidate });
   const placePart = useMutation({ mutationFn: (v: { id: number; start: string; machine: number | null; hours: number }) => api.placePart(v.id, v.start, v.machine, v.hours), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
 
   const dueByOrder = useMemo(() => { const m: Record<number, number> = {}; for (const o of orders) m[o.id] = new Date(o.due_date).getTime(); return m; }, [orders]);
@@ -143,14 +142,14 @@ export default function Gantt() {
   const visibleDays = useMemo(() => dayList.filter((d) => !(hideWeekends && d.weekend)), [dayList, hideWeekends]);
   const hourList = useMemo(() => { const hs: number[] = []; for (let h = Math.ceil(winStart); h < winEnd; h++) hs.push(h); return hs; }, [winStart, winEnd]);
 
-  // segment per fas: övertid = ett sammanhängande block, annars utlagt över arbetstiden
+  // en placerad fas = ett sammanhängande block (elapsed tid). Övertid räknas automatiskt.
   const opSegments = (o: Op): { start: number; end: number }[] => {
     const s = new Date(o.start_time!).getTime();
-    if (o.overtime) return [{ start: s, end: s + o.duration_minutes * 60000 }];
-    return buildSegments(s, o.duration_minutes, shiftOf(o.machine_id));
+    return [{ start: s, end: s + o.duration_minutes * 60000 }];
   };
+  // minuter av blocket som ligger utanför maskinens arbetstid (nätter/helger) = övertid
   const overtimeMinutes = (o: Op): number => {
-    if (!o.overtime || !o.start_time) return 0;
+    if (!o.start_time) return 0;
     const sh = shiftOf(o.machine_id); const start = new Date(o.start_time).getTime(); const end = start + o.duration_minutes * 60000;
     let work = 0, guard = 0; let cur = new Date(start);
     while (cur.getTime() < end && guard++ < 400) {
@@ -188,7 +187,7 @@ export default function Gantt() {
         const a = chain[i], b = chain[i + 1];
         const ri = rowIndexOf(a.machine_id), rj = rowIndexOf(b.machine_id);
         if (ri < 0 || rj < 0) continue;
-        const aEnd = buildSegments(new Date(a.start_time!).getTime(), a.duration_minutes, shiftOf(a.machine_id)).at(-1)!.end;
+        const aEnd = new Date(a.start_time!).getTime() + a.duration_minutes * 60000;
         const x1 = LABEL_W + xOf(aEnd), y1 = HEAD_H + ri * ROW_H + BAR_CENTER;
         const x2 = LABEL_W + xOf(new Date(b.start_time!).getTime()), y2 = HEAD_H + rj * ROW_H + BAR_CENTER;
         const dx = Math.max(20, Math.abs(x2 - x1) / 2);
@@ -233,9 +232,7 @@ export default function Gantt() {
     const onMove = (ev: MouseEvent) => {
       if (Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3) moved = true;
       snap = compute(ev.clientX, ev.clientY);
-      const seg0 = opt.kind === "move" && opt.overtime
-        ? { start: snap.ms, end: snap.ms + opt.durMin * 60000 }
-        : buildSegments(snap.ms, opt.durMin, shiftOf(snap.machine))[0];
+      const seg0 = { start: snap.ms, end: snap.ms + opt.durMin * 60000 };
       const left = LABEL_W + xOf(seg0.start), w = Math.max(xOf(seg0.end) - xOf(seg0.start), 10);
       if (el) el.classList.add("dragging");
       if (preview) { preview.style.display = "block"; preview.style.left = left + "px"; preview.style.top = HEAD_H + snap.row * ROW_H + BAR_TOP + "px"; preview.style.width = w + "px"; }
@@ -258,41 +255,36 @@ export default function Gantt() {
     window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
   }
 
-  const workedMinutes = (startMs: number, targetMs: number, sh: Shift) => {
-    let sum = 0;
-    for (const s of buildSegments(startMs, 100000, sh)) { if (s.start >= targetMs) break; sum += (Math.min(s.end, targetMs) - s.start) / 60000; }
-    return Math.max(0, sum);
-  };
+  // högerhandtag: ändra blockets slut (elapsed tid)
   function beginResize(e: React.MouseEvent, o: Op) {
     e.stopPropagation(); e.preventDefault();
-    const sh = shiftOf(o.machine_id); const startMs = new Date(o.start_time!).getTime(); const ri = rowIndexOf(o.machine_id);
+    const startMs = new Date(o.start_time!).getTime(); const ri = rowIndexOf(o.machine_id);
     const preview = previewRef.current; let newDur = o.duration_minutes;
     document.body.classList.add("dragging-active");
     const onMove = (ev: MouseEvent) => {
       const rect = canvasRef.current!.getBoundingClientRect();
-      const targetMs = clamp(msFromX(ev.clientX - rect.left - LABEL_W), startMs + SNAP_MS, startMs + 100000 * 60000);
-      newDur = Math.max(SNAP_MIN, Math.round(workedMinutes(startMs, targetMs, sh) / SNAP_MIN) * SNAP_MIN);
-      if (preview) { const lastEnd = buildSegments(startMs, newDur, sh).at(-1)!.end; preview.style.display = "block"; preview.style.left = LABEL_W + xOf(startMs) + "px"; preview.style.width = Math.max(xOf(lastEnd) - xOf(startMs), 10) + "px"; preview.style.top = HEAD_H + ri * ROW_H + BAR_TOP + "px"; }
+      const targetMs = Math.max(startMs + SNAP_MS, Math.round(msFromX(ev.clientX - rect.left - LABEL_W) / SNAP_MS) * SNAP_MS);
+      newDur = Math.max(SNAP_MIN, Math.round((targetMs - startMs) / 60000 / SNAP_MIN) * SNAP_MIN);
+      if (preview) { preview.style.display = "block"; preview.style.left = LABEL_W + xOf(startMs) + "px"; preview.style.width = Math.max(xOf(startMs + newDur * 60000) - xOf(startMs), 10) + "px"; preview.style.top = HEAD_H + ri * ROW_H + BAR_TOP + "px"; }
     };
     const onUp = () => {
       window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
       document.body.classList.remove("dragging-active"); if (preview) preview.style.display = "none";
-      if (newDur && Math.abs(newDur - o.duration_minutes) >= SNAP_MIN) resize.mutate({ id: o.id, hours: newDur / 60 });
+      if (Math.abs(newDur - o.duration_minutes) >= SNAP_MIN) resize.mutate({ id: o.id, hours: newDur / 60 });
     };
     window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
   }
-  // vänsterhandtag: korta fasen från början (starten flyttas fram, resten till backlog)
+  // vänsterhandtag: flytta blockets start (elapsed tid), resten till backlog
   function beginResizeStart(e: React.MouseEvent, o: Op) {
     e.stopPropagation(); e.preventDefault();
-    const sh = shiftOf(o.machine_id); const startMs = new Date(o.start_time!).getTime(); const ri = rowIndexOf(o.machine_id);
-    const origEnd = buildSegments(startMs, o.duration_minutes, sh).at(-1)!.end;
+    const startMs = new Date(o.start_time!).getTime(); const ri = rowIndexOf(o.machine_id);
+    const origEnd = startMs + o.duration_minutes * 60000;
     const preview = previewRef.current; let newStart = startMs, newDur = o.duration_minutes;
     document.body.classList.add("dragging-active");
     const onMove = (ev: MouseEvent) => {
       const rect = canvasRef.current!.getBoundingClientRect();
-      const raw = msFromX(ev.clientX - rect.left - LABEL_W);
-      newStart = clamp(Math.round(raw / SNAP_MS) * SNAP_MS, min, origEnd - SNAP_MS);
-      newDur = Math.max(SNAP_MIN, Math.round(workedMinutes(newStart, origEnd, sh) / SNAP_MIN) * SNAP_MIN);
+      newStart = clamp(Math.round(msFromX(ev.clientX - rect.left - LABEL_W) / SNAP_MS) * SNAP_MS, min, origEnd - SNAP_MS);
+      newDur = Math.max(SNAP_MIN, Math.round((origEnd - newStart) / 60000 / SNAP_MIN) * SNAP_MIN);
       if (preview) { preview.style.display = "block"; preview.style.left = LABEL_W + xOf(newStart) + "px"; preview.style.width = Math.max(xOf(origEnd) - xOf(newStart), 10) + "px"; preview.style.top = HEAD_H + ri * ROW_H + BAR_TOP + "px"; }
     };
     const onUp = () => {
@@ -308,7 +300,7 @@ export default function Gantt() {
     if (selectedId == null) return;
     if (!(e.target as HTMLElement).classList.contains("g-row")) return; // bara på tom radyta
     e.preventDefault();
-    const sh = shiftOf(row.id); const ri = rowIndexOf(row.id); const preview = previewRef.current;
+    const ri = rowIndexOf(row.id); const preview = previewRef.current;
     const rect = canvasRef.current!.getBoundingClientRect();
     const startMs = Math.round(msFromX(e.clientX - rect.left - LABEL_W) / SNAP_MS) * SNAP_MS;
     let endMs = startMs + SNAP_MS;
@@ -321,7 +313,7 @@ export default function Gantt() {
       window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
       document.body.classList.remove("dragging-active");
       if (preview) { preview.style.display = "none"; preview.className = "g-preview"; }
-      const mins = Math.round(workedMinutes(startMs, endMs, sh) / SNAP_MIN) * SNAP_MIN;
+      const mins = Math.round((endMs - startMs) / 60000 / SNAP_MIN) * SNAP_MIN;
       if (mins >= SNAP_MIN) placePart.mutate({ id: selectedId!, start: msToLocalIso(startMs), machine: row.id, hours: mins / 60 });
       setSelectedId(null);
     };
@@ -460,7 +452,6 @@ export default function Gantt() {
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "delayed" }); setPop(null); }}><span className="dot" style={{ background: "#ce0e2d" }} />Markera försenad</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "running" }); setPop(null); }}><span className="dot" style={{ background: "#2563eb" }} />Markera pågår</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "planned" }); setPop(null); }}><span className="dot" style={{ background: "#94a3b8" }} />Återställ status</button>
-              {o && <button onClick={() => { overtimeMut.mutate({ id: popState.opId, value: !o.overtime }); setPop(null); }}><span className="dot" style={{ background: "#d97706" }} />{o.overtime ? "Kräv arbetstid" : "Tillåt övertid"}</button>}
               <button onClick={() => { unschedule.mutate(popState.opId); setPop(null); }}><span className="dot" style={{ background: "#111418" }} />Tillbaka till backlog</button>
             </div>
           </>
