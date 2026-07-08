@@ -25,7 +25,6 @@ const icons: Record<string, JSX.Element> = {
 const links = [
   { to: "/", label: "Dashboard", icon: "dashboard", end: true },
   { to: "/gantt", label: "Planering", icon: "gantt" },
-  { to: "/replan", label: "Om-plan", icon: "replan" },
   { to: "/orders", label: "Order", icon: "orders" },
   { to: "/masterdata", label: "Grunddata", icon: "masterdata" },
 ];
@@ -36,7 +35,7 @@ export default function Layout() {
     <div className="app">
       <aside className="rail">
         <div className="logo-chip">
-          <img src="/vanertekno.svg" alt="Vänertekno" />
+          <img src="/vanertekno-mark.svg" alt="Vänertekno" />
         </div>
         {links.map((l) => (
           <NavLink key={l.to} to={l.to} end={l.end} className={({ isActive }) => "rail-item" + (isActive ? " active" : "")}>

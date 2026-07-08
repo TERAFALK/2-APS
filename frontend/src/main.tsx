@@ -9,7 +9,6 @@ import Layout from "./pages/Layout";
 import Dashboard from "./pages/Dashboard";
 import Gantt from "./pages/Gantt";
 import Orders from "./pages/Orders";
-import Replan from "./pages/Replan";
 import MasterData from "./pages/MasterData";
 import "./styles.css";
 
@@ -36,7 +35,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route index element={<Dashboard />} />
             <Route path="gantt" element={<Gantt />} />
             <Route path="orders" element={<Orders />} />
-            <Route path="replan" element={<Replan />} />
             <Route path="masterdata" element={<MasterData />} />
           </Route>
         </Routes>

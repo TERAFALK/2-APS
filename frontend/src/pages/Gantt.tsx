@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 
@@ -23,17 +23,13 @@ const parseTime = (s?: string) => {
 };
 const fmtDur = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1)}h` : `${min}m`);
 
-type Drag =
-  | { kind: "move"; opId: number; label: string; origMs: number; origMachine: number | null; startX: number; startY: number }
-  | { kind: "new"; opId: number; label: string; startX: number; startY: number };
-
 export default function Gantt() {
   const qc = useQueryClient();
   const { data: ops = [] } = useQuery<Op[]>({ queryKey: ["operations"], queryFn: api.operations });
   const { data: machines = [] } = useQuery<any[]>({ queryKey: ["machines"], queryFn: api.machines });
   const { data: orders = [] } = useQuery<any[]>({ queryKey: ["orders"], queryFn: api.orders });
 
-  const [pxph, setPxph] = useState(16);
+  const [pxph, setPxph] = useState(14);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["operations"] });
@@ -63,10 +59,8 @@ export default function Gantt() {
 
   const { min, days } = useMemo(() => {
     const t = scheduled.flatMap((o) => [new Date(o.start_time!).getTime(), new Date(o.end_time!).getTime()]);
-    const base = t.length ? Math.min(...t) : Date.now();
-    const lo = new Date(base); lo.setHours(0, 0, 0, 0);
-    const hiBase = t.length ? Math.max(...t) : Date.now() + 6 * DAY;
-    const hi = new Date(hiBase); hi.setHours(0, 0, 0, 0);
+    const lo = new Date(t.length ? Math.min(...t) : Date.now()); lo.setHours(0, 0, 0, 0);
+    const hi = new Date(t.length ? Math.max(...t) : Date.now() + 6 * DAY); hi.setHours(0, 0, 0, 0);
     const dayCount = Math.max(7, Math.round((hi.getTime() - lo.getTime()) / DAY) + 1);
     return { min: lo.getTime(), days: dayCount };
   }, [scheduled]);
@@ -120,57 +114,70 @@ export default function Gantt() {
     return "ok";
   };
 
-  // ---------- drag: backlog → tidslinje, och flytt på tidslinjen ----------
+  // ---------- drag (imperativ: ingen re-render under drag → smidigt) ----------
   const canvasRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<Drag | null>(null);
-  const [drag, setDrag] = useState<(Drag & { dx: number; dy: number; cx: number; cy: number }) | null>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
 
-  function startDrag(d: Drag, e: React.MouseEvent) {
-    e.preventDefault();
-    dragRef.current = d;
-    setDrag({ ...d, dx: 0, dy: 0, cx: e.clientX, cy: e.clientY });
+  function placeFromPointer(clientX: number, clientY: number) {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const idx = Math.floor((clientY - rect.top - HEAD_H) / ROW_H);
+    if (idx < 0 || idx >= rows.length) return null;
+    const xInCanvas = clientX - rect.left - LABEL_W;
+    const rawMs = min + (xInCanvas / pxph) * HOUR;
+    const snapMs = Math.round(rawMs / (SNAP_MIN * 60000)) * (SNAP_MIN * 60000);
+    return { machine: rows[idx].id, ms: snapMs };
   }
 
-  useEffect(() => {
-    if (!drag) return;
+  function beginDrag(
+    e: React.MouseEvent,
+    opt: { kind: "move"; opId: number; origMs: number; origMachine: number | null } | { kind: "new"; opId: number; label: string }
+  ) {
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const el = opt.kind === "move" ? (e.currentTarget as HTMLElement) : null;
+    const ghost = ghostRef.current;
+    if (el) el.classList.add("dragging");
+    if (opt.kind === "new" && ghost) {
+      ghost.textContent = opt.label;
+      ghost.style.display = "block";
+      ghost.style.left = startX + 12 + "px";
+      ghost.style.top = startY + 12 + "px";
+    }
     document.body.classList.add("dragging-active");
-    const onMove = (e: MouseEvent) => {
-      const d = dragRef.current!;
-      setDrag({ ...d, dx: e.clientX - d.startX, dy: e.clientY - d.startY, cx: e.clientX, cy: e.clientY });
-    };
-    const onUp = (e: MouseEvent) => {
-      const d = dragRef.current; dragRef.current = null; setDrag(null);
-      document.body.classList.remove("dragging-active");
-      if (!d) return;
-      const rect = canvasRef.current?.getBoundingClientRect();
-      let machineId: number | null = d.kind === "move" ? d.origMachine : null;
-      let rowValid = false;
-      if (rect) {
-        const idx = Math.floor((e.clientY - rect.top - HEAD_H) / ROW_H);
-        if (idx >= 0 && idx < rows.length) { machineId = rows[idx].id; rowValid = true; }
+
+    const onMove = (ev: MouseEvent) => {
+      if (el) el.style.transform = `translate(${ev.clientX - startX}px, ${ev.clientY - startY}px)`;
+      if (opt.kind === "new" && ghost) {
+        ghost.style.left = ev.clientX + 12 + "px";
+        ghost.style.top = ev.clientY + 12 + "px";
       }
-      if (d.kind === "move") {
-        const dx = e.clientX - d.startX;
+    };
+    const onUp = (ev: MouseEvent) => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("dragging-active");
+      if (el) { el.classList.remove("dragging"); el.style.transform = ""; }
+      if (ghost) ghost.style.display = "none";
+
+      if (opt.kind === "move") {
+        const dx = ev.clientX - startX;
+        if (Math.abs(dx) < 4 && Math.abs(ev.clientY - startY) < 4) return; // klick, ingen flytt
         const deltaMin = Math.round((dx / pxph) * 60 / SNAP_MIN) * SNAP_MIN;
-        const newMs = d.origMs + deltaMin * 60000;
-        if (Math.abs(dx) > 4 || machineId !== d.origMachine) {
-          schedule.mutate({ id: d.opId, start: new Date(newMs).toISOString(), machine: machineId });
-        }
+        const newMs = opt.origMs + deltaMin * 60000;
+        const drop = placeFromPointer(ev.clientX, ev.clientY);
+        const machine = drop?.machine ?? opt.origMachine;
+        schedule.mutate({ id: opt.opId, start: new Date(newMs).toISOString(), machine });
       } else {
-        // ny placering från backlog — kräver träff på en maskinrad
-        if (rect && rowValid && machineId != null) {
-          const xInCanvas = e.clientX - rect.left - LABEL_W;
-          const rawMs = min + (xInCanvas / pxph) * HOUR;
-          const snapMs = Math.round(rawMs / (SNAP_MIN * 60000)) * (SNAP_MIN * 60000);
-          schedule.mutate({ id: d.opId, start: new Date(snapMs).toISOString(), machine: machineId });
+        const drop = placeFromPointer(ev.clientX, ev.clientY);
+        if (drop && drop.machine != null) {
+          schedule.mutate({ id: opt.opId, start: new Date(drop.ms).toISOString(), machine: drop.machine });
         }
       }
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag?.opId, drag?.kind]);
+  }
 
   const canvasH = HEAD_H + rows.length * ROW_H;
   const busy = schedule.isPending || unschedule.isPending;
@@ -196,20 +203,19 @@ export default function Gantt() {
         </div>
       ) : (
         <>
-          {/* Backlog */}
           <div className="backlog">
             <div className="backlog-head">
               <h2 style={{ margin: 0 }}>Moment att planera ({backlog.length})</h2>
-              <span className="drop-hint">Dra ett moment till en maskinrad i tidslinjen för att placera det.</span>
+              <span className="drop-hint">Dra ett moment till en maskinrad för att placera det.</span>
             </div>
             {backlog.length === 0 ? (
               <div className="subtle">
-                Inga oplanerade moment. Skapa en order (så genereras dess moment) eller tryck <strong>Förbered moment</strong>.
+                Inga oplanerade moment. Skapa en order (då genereras dess moment) eller tryck <strong>Förbered moment</strong>.
               </div>
             ) : (
               <div className="backlog-chips">
                 {backlog.map((o) => (
-                  <div key={o.id} className="chip" onMouseDown={(e) => startDrag({ kind: "new", opId: o.id, label: `${orderNo(o.order_id)} · ${o.name}`, startX: e.clientX, startY: e.clientY }, e)}>
+                  <div key={o.id} className="chip" onMouseDown={(e) => beginDrag(e, { kind: "new", opId: o.id, label: `${orderNo(o.order_id)} · ${o.name}` })}>
                     <strong>{orderNo(o.order_id)}</strong> · {o.name}
                     <span className="dur">{fmtDur(o.duration_minutes)}</span>
                   </div>
@@ -218,7 +224,6 @@ export default function Gantt() {
             )}
           </div>
 
-          {/* Tidslinje */}
           <div className="gantt2">
             <div className="g-canvas" ref={canvasRef} style={{ width: LABEL_W + widthPx, height: canvasH }}>
               {dayList.filter((d) => d.weekend).map((d) => (
@@ -250,7 +255,7 @@ export default function Gantt() {
               <svg className="g-arrows" width={LABEL_W + widthPx} height={canvasH}>
                 <defs>
                   <marker id="arrow" markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto">
-                    <path d="M0,0 L6,3 L0,6 Z" fill="rgba(206,14,45,0.65)" />
+                    <path d="M0,0 L6,3 L0,6 Z" fill="rgba(206,14,45,0.6)" />
                   </marker>
                 </defs>
                 {arrows.map((a) => <path key={a.key} d={a.d} markerEnd="url(#arrow)" />)}
@@ -273,12 +278,11 @@ export default function Gantt() {
                       const s = new Date(o.start_time!).getTime();
                       const e = new Date(o.end_time!).getTime();
                       const w = Math.max(((e - s) / HOUR) * pxph, 8);
-                      const isDrag = drag?.kind === "move" && drag.opId === o.id;
                       return (
-                        <div key={o.id} className={"g-bar " + barClass(o) + (isDrag ? " dragging" : "")}
-                          style={{ left: LABEL_W + xOf(s), width: w, transform: isDrag ? `translate(${drag!.dx}px, ${drag!.dy}px)` : undefined }}
+                        <div key={o.id} className={"g-bar " + barClass(o)}
+                          style={{ left: LABEL_W + xOf(s), width: w }}
                           title={`${orderNo(o.order_id)} · ${o.name}\n${new Date(s).toLocaleString("sv-SE")} – ${new Date(e).toLocaleTimeString("sv-SE")}\nDra för att flytta · dubbelklick = tillbaka till backlog`}
-                          onMouseDown={(ev) => startDrag({ kind: "move", opId: o.id, label: o.name, origMs: s, origMachine: o.machine_id, startX: ev.clientX, startY: ev.clientY }, ev)}
+                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id })}
                           onDoubleClick={() => unschedule.mutate(o.id)}>
                           {orderNo(o.order_id)} · {o.name}
                         </div>
@@ -295,15 +299,12 @@ export default function Gantt() {
             <span><span className="swatch" style={{ background: "var(--slate)" }} />Planerad</span>
             <span><span className="swatch" style={{ background: "#2563eb" }} />Pågår</span>
             <span><span className="swatch" style={{ background: "#ce0e2d" }} />Försenad</span>
-            <span style={{ marginLeft: "auto" }}>💡 Dubbelklicka på en stapel för att lägga tillbaka momentet i backloggen.</span>
+            <span style={{ marginLeft: "auto" }}>💡 Dubbelklicka på en stapel för att lägga tillbaka den i backloggen.</span>
           </div>
         </>
       )}
 
-      {/* dragghost för backlog-moment */}
-      {drag?.kind === "new" && (
-        <div className="chip-ghost" style={{ left: drag.cx + 10, top: drag.cy + 10 }}>{drag.label}</div>
-      )}
+      <div className="chip-ghost" ref={ghostRef} style={{ display: "none" }} />
       {busy && <div className="replan-toast">⟳ Uppdaterar schema…</div>}
     </>
   );
