@@ -1,96 +1,74 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
-function token(): string | null {
-  return localStorage.getItem("aps_token");
-}
+const token = () => localStorage.getItem("aps_token");
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(opts.headers as Record<string, string>),
-  };
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...(opts.headers as any) };
   const t = token();
   if (t) headers["Authorization"] = `Bearer ${t}`;
-
   const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (res.status === 401) {
-    localStorage.removeItem("aps_token");
-    window.location.href = "/login";
-  }
+  if (res.status === 401) { localStorage.removeItem("aps_token"); window.location.href = "/login"; }
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? res.statusText);
   return res.status === 204 ? (undefined as T) : res.json();
 }
+const body = (b: any) => JSON.stringify(b);
 
 export const api = {
   async login(email: string, password: string) {
-    const body = new URLSearchParams({ username: email, password });
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
+      body: new URLSearchParams({ username: email, password }),
     });
     if (!res.ok) throw new Error("Fel e-post eller lösenord");
     const data = await res.json();
     localStorage.setItem("aps_token", data.access_token);
     return data;
   },
-  logout() {
-    localStorage.removeItem("aps_token");
-  },
+  logout: () => localStorage.removeItem("aps_token"),
   me: () => request<any>("/auth/me"),
+
+  // dashboard
   kpi: () => request<any>("/dashboard/kpi"),
-  utilization: () => request<any[]>("/dashboard/utilization"),
-  bottlenecks: () => request<any[]>("/dashboard/bottlenecks"),
-  orders: () => request<any[]>("/orders"),
-  operations: () => request<any[]>("/operations"),
+  load: () => request<any[]>("/dashboard/load"),
+
+  // customers
+  customers: () => request<any[]>("/customers"),
+  createCustomer: (b: any) => request<any>("/customers", { method: "POST", body: body(b) }),
+  updateCustomer: (id: number, b: any) => request<any>(`/customers/${id}`, { method: "PUT", body: body(b) }),
+  deleteCustomer: (id: number) => request<void>(`/customers/${id}`, { method: "DELETE" }),
+
+  // machines
   machines: () => request<any[]>("/machines"),
-  machineTypes: () => request<any[]>("/machine-types"),
-  products: () => request<any[]>("/products"),
-  runPlan: () => request<any>("/plan/run", { method: "POST" }),
-  planDiff: () => request<any>("/plan/diff"),
-  generateMoments: () => request<any>("/operations/generate-missing", { method: "POST" }),
+  createMachine: (b: any) => request<any>("/machines", { method: "POST", body: body(b) }),
+  updateMachine: (id: number, b: any) => request<any>(`/machines/${id}`, { method: "PUT", body: body(b) }),
+  deleteMachine: (id: number) => request<void>(`/machines/${id}`, { method: "DELETE" }),
+
+  // moment types (dropdown för faser)
+  momentTypes: () => request<any[]>("/moment-types"),
+  createMomentType: (b: any) => request<any>("/moment-types", { method: "POST", body: body(b) }),
+  updateMomentType: (id: number, b: any) => request<any>(`/moment-types/${id}`, { method: "PUT", body: body(b) }),
+  deleteMomentType: (id: number) => request<void>(`/moment-types/${id}`, { method: "DELETE" }),
+
+  // orders
+  orders: () => request<any[]>("/orders"),
+  createOrder: (b: any) => request<any>("/orders", { method: "POST", body: body(b) }),
+  deleteOrder: (id: number) => request<void>(`/orders/${id}`, { method: "DELETE" }),
+
+  // faser (moment)
+  operations: () => request<any[]>("/operations"),
+  addPhase: (orderId: number, b: any) => request<any>(`/orders/${orderId}/phases`, { method: "POST", body: body(b) }),
+  updatePhase: (id: number, b: any) => request<any>(`/operations/${id}`, { method: "PUT", body: body(b) }),
+  deletePhase: (id: number) => request<void>(`/operations/${id}`, { method: "DELETE" }),
+  splitPhase: (id: number, parts: number) => request<any>(`/operations/${id}/split?parts=${parts}`, { method: "POST" }),
+
+  // manuell schemaläggning
   scheduleManual: (id: number, startIso: string, machineId: number | null) => {
     const p = new URLSearchParams({ start: startIso });
     if (machineId != null) p.set("machine_id", String(machineId));
     return request<any>(`/operations/${id}/manual?${p}`, { method: "PATCH" });
   },
-  unscheduleMoment: (id: number) =>
-    request<any>(`/operations/${id}/manual?unschedule=true`, { method: "PATCH" }),
-  lockOperation: (id: number) =>
-    request<any>(`/operations/${id}/lock`, { method: "POST" }),
-  moveOperation: (id: number, startIso: string, machineId?: number | null) => {
-    const params = new URLSearchParams({ start: startIso });
-    if (machineId != null) params.set("machine_id", String(machineId));
-    return request<any>(`/operations/${id}/schedule?${params}`, { method: "PATCH" });
-  },
-  createOrder: (body: any) =>
-    request<any>("/orders", { method: "POST", body: JSON.stringify(body) }),
-  createProduct: (body: any) =>
-    request<any>("/products", { method: "POST", body: JSON.stringify(body) }),
-  createMachine: (body: any) =>
-    request<any>("/machines", { method: "POST", body: JSON.stringify(body) }),
-  createMachineType: (body: any) =>
-    request<any>("/machine-types", { method: "POST", body: JSON.stringify(body) }),
-  addRouting: (productId: number, body: any) =>
-    request<any>(`/products/${productId}/routing`, { method: "POST", body: JSON.stringify(body) }),
-
-  // --- edit / delete ---
-  updateMachineType: (id: number, body: any) =>
-    request<any>(`/machine-types/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteMachineType: (id: number) => request<void>(`/machine-types/${id}`, { method: "DELETE" }),
-  updateMachine: (id: number, body: any) =>
-    request<any>(`/machines/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteMachine: (id: number) => request<void>(`/machines/${id}`, { method: "DELETE" }),
-  updateProduct: (id: number, body: any) =>
-    request<any>(`/products/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteProduct: (id: number) => request<void>(`/products/${id}`, { method: "DELETE" }),
-  updateRouting: (pid: number, sid: number, body: any) =>
-    request<any>(`/products/${pid}/routing/${sid}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteRouting: (pid: number, sid: number) =>
-    request<void>(`/products/${pid}/routing/${sid}`, { method: "DELETE" }),
-  updateOrder: (id: number, body: any) =>
-    request<any>(`/orders/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteOrder: (id: number) => request<void>(`/orders/${id}`, { method: "DELETE" }),
+  unscheduleMoment: (id: number) => request<any>(`/operations/${id}/manual?unschedule=true`, { method: "PATCH" }),
 };
 
 export const isLoggedIn = () => !!token();

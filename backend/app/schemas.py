@@ -77,9 +77,17 @@ class MachineTypeOut(ORMBase, MachineTypeIn):
     id: int
 
 
+class MomentTypeIn(BaseModel):
+    name: str
+
+
+class MomentTypeOut(ORMBase, MomentTypeIn):
+    id: int
+
+
 class MachineIn(BaseModel):
     name: str
-    machine_type_id: int
+    machine_type_id: int | None = None
     shift_start: time = time(7, 0)
     shift_end: time = time(16, 0)
     available: bool = True
@@ -92,9 +100,7 @@ class MachineOut(ORMBase, MachineIn):
 # --- orders / plan ---
 class OrderIn(BaseModel):
     order_no: str
-    product_id: int
     customer_id: int | None = None
-    quantity: int = 1
     priority: int = 100
     due_date: datetime
 
@@ -102,12 +108,16 @@ class OrderIn(BaseModel):
 class OrderOut(ORMBase):
     id: int
     order_no: str
-    product_id: int
     customer_id: int | None
-    quantity: int
     priority: int
     due_date: datetime
     status: OrderStatus
+
+
+class PhaseIn(BaseModel):
+    name: str
+    machine_id: int | None = None
+    hours: float = 1.0
 
 
 class OperationOut(ORMBase):

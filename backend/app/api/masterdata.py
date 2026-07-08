@@ -6,11 +6,11 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import (
-    Customer, Machine, MachineType, Operation, Product, Role, RoutingStep,
+    Customer, Machine, MachineType, MomentType, Operation, Product, Role, RoutingStep,
 )
 from app.schemas import (
     CustomerIn, CustomerOut, MachineIn, MachineOut, MachineTypeIn, MachineTypeOut,
-    ProductIn, ProductOut, RoutingStepIn, RoutingStepOut,
+    MomentTypeIn, MomentTypeOut, ProductIn, ProductOut, RoutingStepIn, RoutingStepOut,
 )
 from app.security import get_current_user, require_roles
 
@@ -85,6 +85,21 @@ def create_machine(payload: MachineIn, db: Session = Depends(get_db)):
     return m
 
 
+# ---------------------------------------------------------------- moment types
+@router.get("/moment-types", response_model=list[MomentTypeOut])
+def list_moment_types(db: Session = Depends(get_db)):
+    return db.scalars(select(MomentType).order_by(MomentType.name)).all()
+
+
+@router.post("/moment-types", response_model=MomentTypeOut, dependencies=[Depends(planner)])
+def create_moment_type(payload: MomentTypeIn, db: Session = Depends(get_db)):
+    if db.scalar(select(MomentType).where(MomentType.name == payload.name)):
+        raise HTTPException(status_code=409, detail="Momenttypen finns redan")
+    mt = MomentType(name=payload.name)
+    db.add(mt); db.commit(); db.refresh(mt)
+    return mt
+
+
 # ---------------------------------------------------------------- edit / delete
 def _get_or_404(db: Session, model, id_: int, label: str):
     obj = db.get(model, id_)
@@ -114,6 +129,20 @@ def update_customer(cid: int, payload: CustomerIn, db: Session = Depends(get_db)
 @router.delete("/customers/{cid}", status_code=204, dependencies=[Depends(planner)])
 def delete_customer(cid: int, db: Session = Depends(get_db)):
     _delete(db, _get_or_404(db, Customer, cid, "Kund"))
+
+
+# moment types
+@router.put("/moment-types/{tid}", response_model=MomentTypeOut, dependencies=[Depends(planner)])
+def update_moment_type(tid: int, payload: MomentTypeIn, db: Session = Depends(get_db)):
+    mt = _get_or_404(db, MomentType, tid, "Momenttyp")
+    mt.name = payload.name
+    db.commit(); db.refresh(mt)
+    return mt
+
+
+@router.delete("/moment-types/{tid}", status_code=204, dependencies=[Depends(planner)])
+def delete_moment_type(tid: int, db: Session = Depends(get_db)):
+    _delete(db, _get_or_404(db, MomentType, tid, "Momenttyp"))
 
 
 # machine types

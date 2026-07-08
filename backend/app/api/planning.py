@@ -1,6 +1,8 @@
-"""Order, operationer och planering (APS-motorn)."""
+"""Order, faser (moment) och manuell planering."""
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from datetime import datetime, timedelta
@@ -9,7 +11,7 @@ from app.db import get_db
 from app.models import (
     Machine, MaintenanceWindow, Operation, OperationStatus, ProductionOrder, Role, ScheduleVersion,
 )
-from app.schemas import OperationOut, OrderIn, OrderOut, PlanResult
+from app.schemas import OperationOut, OrderIn, OrderOut, PhaseIn, PlanResult
 from app.security import get_current_user, require_roles
 from app.services.diff import diff_latest, diff_versions
 from app.services.manual import generate_missing, generate_operations_for_order
@@ -31,10 +33,78 @@ def create_order(payload: OrderIn, db: Session = Depends(get_db)):
     from app.models import OrderStatus
     order = ProductionOrder(**payload.model_dump(), status=OrderStatus.released)
     db.add(order); db.commit(); db.refresh(order)
-    # generera momenten (operationerna) direkt så de hamnar i backloggen för manuell planering
-    generate_operations_for_order(db, order)
-    db.commit()
     return order
+
+
+@router.delete("/orders/{order_id}", status_code=204, dependencies=[Depends(planner)])
+def delete_order(order_id: int, db: Session = Depends(get_db)):
+    order = db.get(ProductionOrder, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order saknas")
+    db.delete(order); db.commit()
+
+
+# ---------------------------------------------------------------- faser (moment)
+@router.post("/orders/{order_id}/phases", response_model=OperationOut, dependencies=[Depends(planner)])
+def add_phase(order_id: int, payload: PhaseIn, db: Session = Depends(get_db)):
+    """Lägg till en fas på en order: momenttyp (namn), maskin och uppskattade timmar."""
+    if not db.get(ProductionOrder, order_id):
+        raise HTTPException(status_code=404, detail="Order saknas")
+    last = db.scalar(select(func.max(Operation.sequence)).where(Operation.order_id == order_id))
+    op = Operation(
+        order_id=order_id,
+        sequence=(last or 0) + 10,
+        name=payload.name,
+        machine_id=payload.machine_id,
+        duration_minutes=max(1, round(payload.hours * 60)),
+        status=OperationStatus.planned,
+    )
+    db.add(op); db.commit(); db.refresh(op)
+    return op
+
+
+@router.put("/operations/{op_id}", response_model=OperationOut, dependencies=[Depends(planner)])
+def update_phase(op_id: int, payload: PhaseIn, db: Session = Depends(get_db)):
+    op = db.get(Operation, op_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Fas saknas")
+    op.name = payload.name
+    op.machine_id = payload.machine_id
+    op.duration_minutes = max(1, round(payload.hours * 60))
+    if op.start_time:
+        op.end_time = op.start_time + timedelta(minutes=op.duration_minutes)
+    db.commit(); db.refresh(op)
+    return op
+
+
+@router.delete("/operations/{op_id}", status_code=204, dependencies=[Depends(planner)])
+def delete_phase(op_id: int, db: Session = Depends(get_db)):
+    op = db.get(Operation, op_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Fas saknas")
+    db.delete(op); db.commit()
+
+
+@router.post("/operations/{op_id}/split", dependencies=[Depends(planner)])
+def split_phase(op_id: int, parts: int = 2, db: Session = Depends(get_db)):
+    """Dela en fas i lika stora delar (t.ex. 40h → 5×8h) som placeras var för sig."""
+    op = db.get(Operation, op_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Fas saknas")
+    n = max(2, min(20, parts))
+    base = re.sub(r"\s*\(\d+/\d+\)$", "", op.name)
+    per = max(1, op.duration_minutes // n)
+    op.name = f"{base} (1/{n})"
+    op.duration_minutes = per
+    op.start_time = None; op.end_time = None; op.machine_id = op.machine_id
+    op.status = OperationStatus.planned
+    for k in range(2, n + 1):
+        db.add(Operation(
+            order_id=op.order_id, sequence=op.sequence, name=f"{base} ({k}/{n})",
+            machine_id=op.machine_id, duration_minutes=per, status=OperationStatus.planned,
+        ))
+    db.commit()
+    return {"parts": n}
 
 
 @router.put("/orders/{oid}", response_model=OrderOut, dependencies=[Depends(planner)])

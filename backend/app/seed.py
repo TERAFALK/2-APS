@@ -1,4 +1,4 @@
-"""Fyller databasen med demodata för att prova planeringen.
+"""Demodata för den nya arbetsgången (kunder, maskiner, momenttyper, order + faser).
 
 Kör i containern:  docker compose exec api python -m app.seed
 """
@@ -6,61 +6,41 @@ from datetime import datetime, timedelta
 
 from app.db import SessionLocal
 from app.models import (
-    Customer, Machine, MachineType, OrderStatus, Product, ProductionOrder, RoutingStep,
+    Customer, Machine, MomentType, Operation, OperationStatus, OrderStatus, ProductionOrder,
 )
 
 
 def run() -> None:
     db = SessionLocal()
     try:
-        if db.query(Product).first():
+        if db.query(Machine).first():
             print("Demodata finns redan – hoppar över.")
             return
 
-        cnc = MachineType(name="CNC-fräs")
-        svarv = MachineType(name="Svarv")
-        montering = MachineType(name="Montering")
-        db.add_all([cnc, svarv, montering]); db.flush()
-
-        db.add_all([
-            Machine(name="CNC-1", machine_type_id=cnc.id),
-            Machine(name="CNC-2", machine_type_id=cnc.id),
-            Machine(name="Svarv-1", machine_type_id=svarv.id),
-            Machine(name="Montering-1", machine_type_id=montering.id),
-        ])
-
+        machines = [
+            Machine(name="CNC-1"), Machine(name="CNC-2"),
+            Machine(name="Svarv-1"), Machine(name="Montering-1"),
+        ]
+        db.add_all(machines)
+        db.add_all([MomentType(name=n) for n in ["Fräsning", "Svarvning", "Montering", "Kapning", "Kontroll"]])
         kund = Customer(name="Volvo CE", contact_email="inkop@volvo.example")
         db.add(kund); db.flush()
 
-        p1 = Product(article_no="ART-1001", name="Hydraulblock")
-        p2 = Product(article_no="ART-1002", name="Axeltapp")
-        db.add_all([p1, p2]); db.flush()
-
-        db.add_all([
-            RoutingStep(product_id=p1.id, sequence=10, name="Fräsning", machine_type_id=cnc.id,
-                        run_minutes_per_unit=12, setup_minutes=30),
-            RoutingStep(product_id=p1.id, sequence=20, name="Montering", machine_type_id=montering.id,
-                        run_minutes_per_unit=8, setup_minutes=15),
-            RoutingStep(product_id=p2.id, sequence=10, name="Svarvning", machine_type_id=svarv.id,
-                        run_minutes_per_unit=6, setup_minutes=20),
-            RoutingStep(product_id=p2.id, sequence=20, name="Fräsning", machine_type_id=cnc.id,
-                        run_minutes_per_unit=10, setup_minutes=25),
-        ])
-
         now = datetime.utcnow()
+        order = ProductionOrder(order_no="PO-5001", customer_id=kund.id, priority=10,
+                                due_date=now + timedelta(days=5), status=OrderStatus.released)
+        db.add(order); db.flush()
+
         db.add_all([
-            ProductionOrder(order_no="PO-5001", customer_id=kund.id, product_id=p1.id,
-                            quantity=20, priority=10, due_date=now + timedelta(days=3),
-                            status=OrderStatus.released),
-            ProductionOrder(order_no="PO-5002", customer_id=kund.id, product_id=p2.id,
-                            quantity=40, priority=50, due_date=now + timedelta(days=5),
-                            status=OrderStatus.released),
-            ProductionOrder(order_no="PO-5003", product_id=p1.id,
-                            quantity=15, priority=100, due_date=now + timedelta(days=2),
-                            status=OrderStatus.released),
+            Operation(order_id=order.id, sequence=10, name="Kapning",
+                      machine_id=machines[2].id, duration_minutes=4 * 60, status=OperationStatus.planned),
+            Operation(order_id=order.id, sequence=20, name="Fräsning",
+                      machine_id=machines[0].id, duration_minutes=40 * 60, status=OperationStatus.planned),
+            Operation(order_id=order.id, sequence=30, name="Montering",
+                      machine_id=machines[3].id, duration_minutes=8 * 60, status=OperationStatus.planned),
         ])
         db.commit()
-        print("Demodata skapad. Logga in och kör planering i Gantt-vyn.")
+        print("Demodata skapad. Öppna Planering och dra ut faserna.")
     finally:
         db.close()
 

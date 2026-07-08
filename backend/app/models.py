@@ -96,11 +96,18 @@ class MachineType(Base):
     machines: Mapped[list[Machine]] = relationship(back_populates="machine_type")
 
 
+class MomentType(Base):
+    """Fördefinierad momenttyp som väljs i dropdown när en fas läggs till på en order."""
+    __tablename__ = "moment_types"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+
+
 class Machine(Base):
     __tablename__ = "machines"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True)
-    machine_type_id: Mapped[int] = mapped_column(ForeignKey("machine_types.id"))
+    machine_type_id: Mapped[int | None] = mapped_column(ForeignKey("machine_types.id"), nullable=True)
     # Enkel arbetstidsmodell för MVP (utökas med kalender/undantag i Fas 2)
     shift_start: Mapped[time] = mapped_column(Time, default=time(7, 0))
     shift_end: Mapped[time] = mapped_column(Time, default=time(16, 0))
@@ -157,7 +164,7 @@ class ProductionOrder(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     order_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), nullable=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     priority: Mapped[int] = mapped_column(Integer, default=100)  # lägre = viktigare
     due_date: Mapped[datetime] = mapped_column(DateTime)
@@ -165,7 +172,7 @@ class ProductionOrder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     customer: Mapped[Customer | None] = relationship(back_populates="orders")
-    product: Mapped[Product] = relationship()
+    product: Mapped[Product | None] = relationship()
     operations: Mapped[list[Operation]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
@@ -200,7 +207,7 @@ class Operation(Base):
     version_id: Mapped[int | None] = mapped_column(
         ForeignKey("schedule_versions.id"), nullable=True
     )
-    routing_step_id: Mapped[int] = mapped_column(ForeignKey("routing_steps.id"))
+    routing_step_id: Mapped[int | None] = mapped_column(ForeignKey("routing_steps.id"), nullable=True)
     sequence: Mapped[int] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String(255))
     # vilken maskintyp momentet kräver (kopieras från routing-steget) → styr var det får placeras
