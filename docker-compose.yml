@@ -83,11 +83,12 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on: [api, frontend]
-    ports:
-      # Labb bakom NPM: sätt HTTP_PORT=8080 så du inte krockar med NPM:s 80/443.
-      # Kunddrift med egen TLS: HTTP_PORT=80, HTTPS_PORT=443.
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+    # LABB bakom NPM (NPM_MODE): inga host-portar behövs — NPM når Caddy via npm_proxy-nätet
+    # på container-alias "aps-gateway:80". Sätt då SITE_ADDRESS=:80 i .env.
+    # KUNDDRIFT med egen TLS: avkommentera ports nedan och sätt SITE_ADDRESS=https://... .
+    # ports:
+    #   - "${HTTP_PORT:-80}:80"
+    #   - "${HTTPS_PORT:-443}:443"
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS}
       TLS_EMAIL: ${TLS_EMAIL}
@@ -95,7 +96,10 @@ services:
       - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    networks: [internal]
+    networks:
+      internal: {}
+      npm_proxy:
+        aliases: [aps-gateway]
 
 volumes:
   db_data:
@@ -106,3 +110,6 @@ volumes:
 networks:
   internal:
     driver: bridge
+  # Befintligt, externt nätverk som din Nginx Proxy Manager redan ligger på.
+  npm_proxy:
+    external: true
