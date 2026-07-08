@@ -203,6 +203,8 @@ class Operation(Base):
     routing_step_id: Mapped[int] = mapped_column(ForeignKey("routing_steps.id"))
     sequence: Mapped[int] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String(255))
+    # vilken maskintyp momentet kräver (kopieras från routing-steget) → styr var det får placeras
+    machine_type_id: Mapped[int | None] = mapped_column(ForeignKey("machine_types.id"), nullable=True)
     machine_id: Mapped[int | None] = mapped_column(ForeignKey("machines.id"), nullable=True)
     start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from app.db import get_db
 from app.models import (
-    MaintenanceWindow, Operation, OperationStatus, ProductionOrder, Role, ScheduleVersion,
+    Machine, MaintenanceWindow, Operation, OperationStatus, ProductionOrder, Role, ScheduleVersion,
 )
 from app.schemas import OperationOut, OrderIn, OrderOut, PlanResult
 from app.security import get_current_user, require_roles
@@ -71,6 +71,10 @@ def schedule_manual(
     else:
         if start is None:
             raise HTTPException(status_code=422, detail="start krävs")
+        if machine_id is not None and op.machine_type_id is not None:
+            machine = db.get(Machine, machine_id)
+            if machine and machine.machine_type_id != op.machine_type_id:
+                raise HTTPException(status_code=422, detail="Momentet kräver en annan maskintyp")
         op.start_time = start
         op.end_time = start + timedelta(minutes=op.duration_minutes)
         if machine_id is not None:

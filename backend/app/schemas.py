@@ -115,6 +115,7 @@ class OperationOut(ORMBase):
     order_id: int
     name: str
     sequence: int
+    machine_type_id: int | None
     machine_id: int | None
     start_time: datetime | None
     end_time: datetime | None

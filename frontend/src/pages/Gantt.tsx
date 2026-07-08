@@ -4,11 +4,11 @@ import { api } from "../api";
 
 type Op = {
   id: number; order_id: number; name: string; sequence: number;
-  machine_id: number | null; start_time: string | null; end_time: string | null;
-  status: string; duration_minutes: number;
+  machine_type_id: number | null; machine_id: number | null;
+  start_time: string | null; end_time: string | null; status: string; duration_minutes: number;
 };
 
-const LABEL_W = 150;
+const LABEL_W = 168;
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 const HEAD_H = 52;
@@ -17,8 +17,9 @@ const BAR_TOP = 11;
 const BAR_CENTER = 24;
 const SNAP_MIN = 15;
 const SNAP_MS = SNAP_MIN * 60000;
-const DAYS = 42; // fast fönster: ingen omflödning när moment placeras
+const DAYS = 42;
 
+const pad = (n: number) => String(n).padStart(2, "0");
 const parseTime = (s?: string) => {
   if (!s) return { h: 7, m: 0 };
   const [h, m] = s.split(":").map(Number);
@@ -26,14 +27,27 @@ const parseTime = (s?: string) => {
 };
 const fmtDur = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1)}h` : `${min}m`);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+// lokal "väggklocka" utan tidszon — matchar hur backend lagrar/returnerar naiv tid
+const msToLocalIso = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+};
 
 export default function Gantt() {
   const qc = useQueryClient();
   const { data: ops = [] } = useQuery<Op[]>({ queryKey: ["operations"], queryFn: api.operations });
   const { data: machines = [] } = useQuery<any[]>({ queryKey: ["machines"], queryFn: api.machines });
+  const { data: types = [] } = useQuery<any[]>({ queryKey: ["machineTypes"], queryFn: api.machineTypes });
   const { data: orders = [] } = useQuery<any[]>({ queryKey: ["orders"], queryFn: api.orders });
 
   const [pxph, setPxph] = useState(14);
+  const [warn, setWarn] = useState("");
+  const warnTimer = useRef<number | null>(null);
+  const flashWarn = (msg: string) => {
+    setWarn(msg);
+    if (warnTimer.current) clearTimeout(warnTimer.current);
+    warnTimer.current = window.setTimeout(() => setWarn(""), 2600);
+  };
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["operations"] });
@@ -43,6 +57,7 @@ export default function Gantt() {
   const schedule = useMutation({
     mutationFn: (v: { id: number; start: string; machine: number | null }) => api.scheduleManual(v.id, v.start, v.machine),
     onSuccess: invalidate,
+    onError: (e: any) => flashWarn(e.message || "Kunde inte placera momentet"),
   });
   const unschedule = useMutation({ mutationFn: (id: number) => api.unscheduleMoment(id), onSuccess: invalidate });
 
@@ -51,30 +66,30 @@ export default function Gantt() {
     for (const o of orders) m[o.id] = new Date(o.due_date).getTime();
     return m;
   }, [orders]);
-  const machineById = useMemo(() => {
-    const m: Record<number, any> = {};
-    for (const mc of machines) m[mc.id] = mc;
-    return m;
-  }, [machines]);
+  const typeName = (id: number | null) => types.find((t) => t.id === id)?.name ?? "";
   const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
 
   const scheduled = ops.filter((o) => o.start_time && o.end_time);
   const backlog = ops.filter((o) => !o.start_time);
 
-  // FAST tidsfönster: måndag förra veckan + 6 veckor. Ändras aldrig av placeringar.
+  // FAST tidsfönster (ändras aldrig av placeringar)
   const min = useMemo(() => {
     const d = new Date(); d.setHours(0, 0, 0, 0);
-    const dow = (d.getDay() + 6) % 7; // 0 = måndag
+    const dow = (d.getDay() + 6) % 7;
     d.setDate(d.getDate() - dow - 7);
     return d.getTime();
   }, []);
   const days = DAYS;
-
   const dayWidth = 24 * pxph;
   const widthPx = days * dayWidth;
   const xOf = (ms: number) => ((ms - min) / HOUR) * pxph;
 
-  const rows: { id: number | null; name: string }[] = machines.map((m) => ({ id: m.id, name: m.name }));
+  // rader grupperade & sorterade efter maskintyp
+  const rows = useMemo(() => {
+    return [...machines]
+      .sort((a, b) => (a.machine_type_id - b.machine_type_id) || String(a.name).localeCompare(String(b.name), "sv"))
+      .map((m) => ({ id: m.id as number, name: m.name as string, typeId: m.machine_type_id as number }));
+  }, [machines]);
   const rowIndexOf = (mid: number | null) => rows.findIndex((r) => r.id === mid);
 
   const opsByMachine: Record<string, Op[]> = {};
@@ -107,7 +122,7 @@ export default function Gantt() {
       }
     }
     return paths;
-  }, [scheduled, rows.length, min, pxph]);
+  }, [scheduled, rows, min, pxph]);
 
   const now = Date.now();
   const showNow = now >= min && now <= min + days * DAY;
@@ -120,26 +135,38 @@ export default function Gantt() {
     return "ok";
   };
 
-  // ---------- imperativ drag med live snap-preview ----------
+  // ---------- scroll & zoom ----------
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
-
-  // scrolla till "nu" en gång
+  const anchorRef = useRef<number | null>(null);
   const scrolled = useRef(false);
+
+  function zoom(factor: number) {
+    const sc = scrollRef.current;
+    if (sc) anchorRef.current = min + ((sc.scrollLeft + sc.clientWidth / 2 - LABEL_W) / pxph) * HOUR;
+    setPxph((p) => clamp(Math.round(p * factor), 4, 80));
+  }
+
   useEffect(() => {
-    if (!scrolled.current && scrollRef.current && showNow) {
-      scrollRef.current.scrollLeft = Math.max(0, xOf(now) - 120);
+    const sc = scrollRef.current;
+    if (!sc) return;
+    if (anchorRef.current != null) {
+      sc.scrollLeft = LABEL_W + ((anchorRef.current - min) / HOUR) * pxph - sc.clientWidth / 2;
+      anchorRef.current = null;
+    } else if (!scrolled.current && showNow) {
+      sc.scrollLeft = Math.max(0, xOf(now) - 140);
       scrolled.current = true;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows.length, pxph]);
+  }, [pxph, rows.length]);
 
+  // ---------- drag med live snap-preview + maskintyps-koll ----------
   function beginDrag(
     e: React.MouseEvent,
     opt:
-      | { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number }
-      | { kind: "new"; opId: number; label: string; durMin: number }
+      | { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number; reqType: number | null }
+      | { kind: "new"; opId: number; durMin: number; reqType: number | null }
   ) {
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
@@ -148,7 +175,7 @@ export default function Gantt() {
     const durWidth = Math.max((opt.durMin / 60) * pxph, 10);
     const grabOffsetX = el ? startX - el.getBoundingClientRect().left : 0;
     const origRow = opt.kind === "move" ? rowIndexOf(opt.origMachine) : 0;
-    let snap: { ms: number; machine: number | null; row: number } | null = null;
+    let snap: { ms: number; machine: number | null; row: number; valid: boolean } | null = null;
 
     if (el) el.classList.add("dragging");
     document.body.classList.add("dragging-active");
@@ -159,7 +186,8 @@ export default function Gantt() {
       const leftClient = cx - grabOffsetX;
       const rawMs = min + ((leftClient - rect.left - LABEL_W) / pxph) * HOUR;
       const ms = clamp(Math.round(rawMs / SNAP_MS) * SNAP_MS, min, min + days * DAY - opt.durMin * 60000);
-      return { ms, machine: rows[row].id, row };
+      const valid = opt.reqType == null || rows[row].typeId === opt.reqType;
+      return { ms, machine: rows[row].id, row, valid };
     };
 
     const onMove = (ev: MouseEvent) => {
@@ -170,6 +198,7 @@ export default function Gantt() {
         preview.style.left = left + "px";
         preview.style.top = HEAD_H + snap.row * ROW_H + BAR_TOP + "px";
         preview.style.width = durWidth + "px";
+        preview.className = "g-preview" + (snap.valid ? "" : " invalid");
       }
       if (el) {
         const origLeft = LABEL_W + xOf(opt.kind === "move" ? opt.origMs : min);
@@ -182,10 +211,11 @@ export default function Gantt() {
       document.body.classList.remove("dragging-active");
       if (el) { el.classList.remove("dragging"); el.style.transform = ""; }
       if (preview) preview.style.display = "none";
-      if (!snap) return; // ingen rörelse
-      if (opt.kind === "move" && snap.machine === opt.origMachine && Math.abs(snap.ms - opt.origMs) < SNAP_MS) return;
+      if (!snap) return;
+      if (!snap.valid) { flashWarn(`Fel maskintyp — momentet kräver ${typeName(opt.reqType)}`); return; }
       if (snap.machine == null) return;
-      schedule.mutate({ id: opt.opId, start: new Date(snap.ms).toISOString(), machine: snap.machine });
+      if (opt.kind === "move" && snap.machine === opt.origMachine && Math.abs(snap.ms - opt.origMs) < SNAP_MS) return;
+      schedule.mutate({ id: opt.opId, start: msToLocalIso(snap.ms), machine: snap.machine });
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -199,8 +229,8 @@ export default function Gantt() {
       <div className="page-head">
         <h1>Produktionsplanering</h1>
         <div className="gantt-toolbar">
-          <button className="iconbtn" title="Zooma ut" onClick={() => setPxph((p) => Math.max(4, Math.round(p / 1.4)))}>−</button>
-          <button className="iconbtn" title="Zooma in" onClick={() => setPxph((p) => Math.min(80, Math.round(p * 1.4)))}>+</button>
+          <button className="iconbtn" title="Zooma ut" onClick={() => zoom(1 / 1.4)}>−</button>
+          <button className="iconbtn" title="Zooma in" onClick={() => zoom(1.4)}>+</button>
           <button className="btn secondary" disabled={generate.isPending} onClick={() => generate.mutate()}>
             {generate.isPending ? "Skapar…" : "＋ Förbered moment"}
           </button>
@@ -218,7 +248,7 @@ export default function Gantt() {
           <div className="backlog">
             <div className="backlog-head">
               <h2 style={{ margin: 0 }}>Moment att planera ({backlog.length})</h2>
-              <span className="drop-hint">Dra ett moment till en maskinrad — den streckade rutan visar var det landar.</span>
+              <span className="drop-hint">Dra ett moment till rätt maskintyp — den streckade rutan visar var det landar.</span>
             </div>
             {backlog.length === 0 ? (
               <div className="subtle">
@@ -227,9 +257,10 @@ export default function Gantt() {
             ) : (
               <div className="backlog-chips">
                 {backlog.map((o) => (
-                  <div key={o.id} className="chip" onMouseDown={(e) => beginDrag(e, { kind: "new", opId: o.id, label: `${orderNo(o.order_id)} · ${o.name}`, durMin: o.duration_minutes })}>
+                  <div key={o.id} className="chip" title={`Kräver: ${typeName(o.machine_type_id) || "valfri"}`}
+                    onMouseDown={(e) => beginDrag(e, { kind: "new", opId: o.id, durMin: o.duration_minutes, reqType: o.machine_type_id })}>
                     <strong>{orderNo(o.order_id)}</strong> · {o.name}
-                    <span className="dur">{fmtDur(o.duration_minutes)}</span>
+                    <span className="dur">{typeName(o.machine_type_id)} · {fmtDur(o.duration_minutes)}</span>
                   </div>
                 ))}
               </div>
@@ -259,7 +290,7 @@ export default function Gantt() {
                 ))}
                 {dayList.flatMap((d) =>
                   Array.from({ length: Math.floor(24 / hourStep) + 1 }, (_, k) => k * hourStep).filter((h) => h < 24).map((h) => (
-                    <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.i * dayWidth + h * pxph }}>{String(h).padStart(2, "0")}:00</div>
+                    <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.i * dayWidth + h * pxph }}>{pad(h)}:00</div>
                   ))
                 )}
                 {showNow && <div className="g-nowlabel" style={{ left: LABEL_W + xOf(now) }}>nu {nowLabel}</div>}
@@ -274,16 +305,21 @@ export default function Gantt() {
                 {arrows.map((a) => <path key={a.key} d={a.d} markerEnd="url(#arrow)" />)}
               </svg>
 
-              {/* snap-preview */}
               <div className="g-preview" ref={previewRef} style={{ display: "none" }} />
 
               {rows.map((row, ri) => {
-                const mc = row.id != null ? machineById[row.id] : null;
+                const mc = row.id != null ? machines.find((m) => m.id === row.id) : null;
                 const shiftS = parseTime(mc?.shift_start);
                 const shiftE = parseTime(mc?.shift_end);
+                const groupStart = ri === 0 || rows[ri - 1].typeId !== row.typeId;
                 return (
-                  <div key={String(row.id)} className="g-row" style={{ top: HEAD_H + ri * ROW_H }}>
-                    <div className="g-rowlabel">{row.name}</div>
+                  <div key={String(row.id)} className={"g-row" + (groupStart ? " group-start" : "")} style={{ top: HEAD_H + ri * ROW_H }}>
+                    <div className="g-rowlabel">
+                      <div>
+                        <div className="g-rowname">{row.name}</div>
+                        <div className="g-rowtype">{typeName(row.typeId)}</div>
+                      </div>
+                    </div>
                     {mc && dayList.filter((d) => !d.weekend).map((d) => {
                       const startH = d.i * 24 + shiftS.h + shiftS.m / 60;
                       const endH = d.i * 24 + shiftE.h + shiftE.m / 60;
@@ -298,7 +334,7 @@ export default function Gantt() {
                         <div key={o.id} className={"g-bar " + barClass(o)}
                           style={{ left: LABEL_W + xOf(s), width: w }}
                           title={`${orderNo(o.order_id)} · ${o.name}\n${new Date(s).toLocaleString("sv-SE")} – ${new Date(e).toLocaleTimeString("sv-SE")}\nDra för att flytta · dubbelklick = tillbaka till backlog`}
-                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes })}
+                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes, reqType: o.machine_type_id })}
                           onDoubleClick={() => unschedule.mutate(o.id)}>
                           {orderNo(o.order_id)} · {o.name}
                         </div>
@@ -320,7 +356,8 @@ export default function Gantt() {
         </>
       )}
 
-      {busy && <div className="replan-toast">⟳ Uppdaterar schema…</div>}
+      {warn && <div className="replan-toast warn">⚠ {warn}</div>}
+      {busy && !warn && <div className="replan-toast">⟳ Uppdaterar schema…</div>}
     </>
   );
 }

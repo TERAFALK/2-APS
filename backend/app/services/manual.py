@@ -32,6 +32,7 @@ def generate_operations_for_order(db: Session, order: ProductionOrder) -> int:
                 routing_step_id=step.id,
                 sequence=step.sequence,
                 name=step.name,
+                machine_type_id=step.machine_type_id,
                 duration_minutes=max(1, duration),
                 status=OperationStatus.planned,
             )
