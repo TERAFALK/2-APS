@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 
@@ -433,21 +433,19 @@ export default function Gantt() {
                       const e = s + o.duration_minutes * 60000;
                       const otMin = overtimeMinutes(o);
                       const ots = otMin > 0 ? overtimeIntervals(o) : [];
+                      const barLeft = xOf(s);
                       return (
-                        <Fragment key={o.id}>
-                          <div className={"g-bar " + barClass(o)}
-                            style={{ left: LABEL_W + xOf(s), width: Math.max(xOf(e) - xOf(s), 10) }}
-                            title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt${otMin > 0 ? `\n⚠ ${fmtDur(otMin)} övertid (utanför arbetstid)` : ""}\nKlicka för status · dra för att flytta`}
-                            onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes, overtime: o.overtime })}>
-                            <span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />
-                            {otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}
-                            <span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}
-                            <span className="resize-handle" title="Dra för att korta fasen — resten hamnar i backloggen" onMouseDown={(ev) => beginResize(ev, o)} />
-                          </div>
+                        <div key={o.id} className={"g-bar " + barClass(o)}
+                          style={{ left: LABEL_W + barLeft, width: Math.max(xOf(e) - barLeft, 10) }}
+                          title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt${otMin > 0 ? `\n⚠ ${fmtDur(otMin)} övertid (utanför arbetstid)` : ""}\nKlicka för status · dra för att flytta`}
+                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes, overtime: o.overtime })}>
                           {ots.map((iv, i) => (
-                            <div key={i} className="g-ot" style={{ left: LABEL_W + xOf(iv.start), width: Math.max(xOf(iv.end) - xOf(iv.start), 2) }} />
+                            <div key={i} className="g-ot" style={{ left: xOf(iv.start) - barLeft, width: Math.max(xOf(iv.end) - xOf(iv.start), 2) }} />
                           ))}
-                        </Fragment>
+                          <span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />
+                          <span className="bar-label">{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</span>
+                          <span className="resize-handle" title="Dra för att korta fasen — resten hamnar i backloggen" onMouseDown={(ev) => beginResize(ev, o)} />
+                        </div>
                       );
                     })}
                   </div>
