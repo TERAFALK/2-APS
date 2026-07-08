@@ -12,6 +12,7 @@ from app.models import (
 from app.schemas import OperationOut, OrderIn, OrderOut, PlanResult
 from app.security import get_current_user, require_roles
 from app.services.diff import diff_latest, diff_versions
+from app.services.manual import generate_missing, generate_operations_for_order
 from app.services.scheduling import run_planning
 
 router = APIRouter(tags=["planning"], dependencies=[Depends(get_current_user)])
@@ -30,17 +31,53 @@ def create_order(payload: OrderIn, db: Session = Depends(get_db)):
     from app.models import OrderStatus
     order = ProductionOrder(**payload.model_dump(), status=OrderStatus.released)
     db.add(order); db.commit(); db.refresh(order)
+    # generera momenten (operationerna) direkt så de hamnar i backloggen för manuell planering
+    generate_operations_for_order(db, order)
+    db.commit()
     return order
 
 
 @router.get("/operations", response_model=list[OperationOut])
 def list_operations(db: Session = Depends(get_db)):
-    """Aktuellt schema (operationer i aktiv version)."""
-    active = db.scalar(select(ScheduleVersion).where(ScheduleVersion.is_active.is_(True)))
-    q = select(Operation)
-    if active:
-        q = q.where(Operation.version_id == active.id)
-    return db.scalars(q.order_by(Operation.start_time)).all()
+    """Alla moment — både schemalagda (start_time satt) och backlog (utan tid)."""
+    return db.scalars(select(Operation).order_by(Operation.sequence)).all()
+
+
+@router.post("/operations/generate-missing", dependencies=[Depends(planner)])
+def generate_ops(db: Session = Depends(get_db)):
+    """Skapa moment från routing för alla order som saknar dem (fyller backloggen)."""
+    created = generate_missing(db)
+    return {"created": created}
+
+
+@router.patch("/operations/{op_id}/manual", response_model=OperationOut, dependencies=[Depends(planner)])
+def schedule_manual(
+    op_id: int,
+    start: datetime | None = None,
+    machine_id: int | None = None,
+    unschedule: bool = False,
+    db: Session = Depends(get_db),
+):
+    """Manuell placering av ett moment: sätt starttid + maskin (ingen motor), eller lägg
+    tillbaka i backloggen med unschedule=true."""
+    op = db.get(Operation, op_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Moment saknas")
+    if unschedule:
+        op.start_time = None
+        op.end_time = None
+        op.machine_id = None
+        op.status = OperationStatus.planned
+    else:
+        if start is None:
+            raise HTTPException(status_code=422, detail="start krävs")
+        op.start_time = start
+        op.end_time = start + timedelta(minutes=op.duration_minutes)
+        if machine_id is not None:
+            op.machine_id = machine_id
+        op.status = OperationStatus.planned
+    db.commit(); db.refresh(op)
+    return op
 
 
 @router.post("/plan/run", response_model=PlanResult, dependencies=[Depends(planner)])

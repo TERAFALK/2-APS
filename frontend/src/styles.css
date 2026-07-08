@@ -160,6 +160,23 @@ tbody tr:hover { background: #fbfcfd; }
 .legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
 .replan-toast { position: fixed; bottom: 22px; right: 22px; background: #111418; color: #fff; padding: 12px 18px; border-radius: 10px; box-shadow: var(--shadow-lg); font-weight: 600; z-index: 100; }
 
+/* ---------------- Backlog (omplacerbara moment) ---------------- */
+.backlog { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; margin-bottom: 14px; }
+.backlog-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.backlog-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--slate); border-radius: 8px; padding: 7px 11px; font-size: 13px; cursor: grab;
+  user-select: none; box-shadow: var(--shadow);
+}
+.chip:hover { background: var(--bg); }
+.chip .dur { color: var(--muted); font-size: 12px; }
+.chip-ghost {
+  position: fixed; z-index: 200; pointer-events: none; background: var(--slate); color: #fff;
+  padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; box-shadow: var(--shadow-lg); opacity: 0.95;
+}
+.drop-hint { color: var(--muted); font-size: 12px; }
+
 /* ---------------- Login ---------------- */
 .login-wrap { display: grid; place-items: center; min-height: 100vh; background: linear-gradient(135deg, #fafbfc, #eef1f5); }
 .login-box { background: var(--panel); padding: 38px; border-radius: 18px; box-shadow: var(--shadow-lg); width: 350px; text-align: center; }

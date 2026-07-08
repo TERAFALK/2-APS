@@ -1,27 +1,25 @@
-"""Produktionsanalys: maskinutnyttjande och flaskhalsar utifrån aktivt schema."""
+"""Produktionsanalys: maskinutnyttjande och flaskhalsar utifrån schemalagda moment."""
 from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Machine, Operation, ScheduleVersion
+from app.models import Machine, Operation
+
+
+def _scheduled_ops(db: Session) -> list[Operation]:
+    """Alla moment som placerats på tidslinjen (har starttid)."""
+    return db.scalars(select(Operation).where(Operation.start_time.is_not(None))).all()
 
 
 def machine_utilization(db: Session) -> list[dict]:
-    active = db.scalar(select(ScheduleVersion).where(ScheduleVersion.is_active.is_(True)))
     machines = db.scalars(select(Machine)).all()
-    if not active:
-        return [{"machine": m.name, "machine_id": m.id, "busy_minutes": 0,
-                 "utilization_pct": 0.0, "operations": 0} for m in machines]
+    ops = _scheduled_ops(db)
 
-    ops = db.scalars(select(Operation).where(Operation.version_id == active.id)).all()
-
-    # planeringsfönster = tidigaste start → senaste slut
     starts = [o.start_time for o in ops if o.start_time]
     ends = [o.end_time for o in ops if o.end_time]
-    if not starts or not ends:
-        window = 1
-    else:
+    window = 1
+    if starts and ends:
         window = max(1, int((max(ends) - min(starts)).total_seconds() // 60))
 
     result = []
@@ -40,5 +38,4 @@ def machine_utilization(db: Session) -> list[dict]:
 
 
 def bottlenecks(db: Session, threshold_pct: float = 85.0) -> list[dict]:
-    """Maskiner vars utnyttjande överstiger tröskeln pekas ut som flaskhalsar."""
     return [u for u in machine_utilization(db) if u["utilization_pct"] >= threshold_pct]

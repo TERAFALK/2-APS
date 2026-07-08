@@ -4,7 +4,8 @@ import { api } from "../api";
 
 type Op = {
   id: number; order_id: number; name: string; sequence: number;
-  machine_id: number | null; start_time: string | null; end_time: string | null; status: string;
+  machine_id: number | null; start_time: string | null; end_time: string | null;
+  status: string; duration_minutes: number;
 };
 
 const LABEL_W = 150;
@@ -20,6 +21,11 @@ const parseTime = (s?: string) => {
   const [h, m] = s.split(":").map(Number);
   return { h: h || 0, m: m || 0 };
 };
+const fmtDur = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1)}h` : `${min}m`);
+
+type Drag =
+  | { kind: "move"; opId: number; label: string; origMs: number; origMachine: number | null; startX: number; startY: number }
+  | { kind: "new"; opId: number; label: string; startX: number; startY: number };
 
 export default function Gantt() {
   const qc = useQueryClient();
@@ -27,18 +33,18 @@ export default function Gantt() {
   const { data: machines = [] } = useQuery<any[]>({ queryKey: ["machines"], queryFn: api.machines });
   const { data: orders = [] } = useQuery<any[]>({ queryKey: ["orders"], queryFn: api.orders });
 
-  const [pxph, setPxph] = useState(16); // pixlar per timme (zoom)
+  const [pxph, setPxph] = useState(16);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["operations"] });
     qc.invalidateQueries({ queryKey: ["orders"] });
   };
-  const run = useMutation({ mutationFn: api.runPlan, onSuccess: invalidate });
-  const lock = useMutation({ mutationFn: (id: number) => api.lockOperation(id), onSuccess: invalidate });
-  const move = useMutation({
-    mutationFn: (v: { id: number; start: string; machine: number | null }) => api.moveOperation(v.id, v.start, v.machine),
+  const generate = useMutation({ mutationFn: api.generateMoments, onSuccess: invalidate });
+  const schedule = useMutation({
+    mutationFn: (v: { id: number; start: string; machine: number | null }) => api.scheduleManual(v.id, v.start, v.machine),
     onSuccess: invalidate,
   });
+  const unschedule = useMutation({ mutationFn: (id: number) => api.unscheduleMoment(id), onSuccess: invalidate });
 
   const dueByOrder = useMemo(() => {
     const m: Record<number, number> = {};
@@ -50,16 +56,18 @@ export default function Gantt() {
     for (const mc of machines) m[mc.id] = mc;
     return m;
   }, [machines]);
+  const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
 
   const scheduled = ops.filter((o) => o.start_time && o.end_time);
+  const backlog = ops.filter((o) => !o.start_time);
 
-  // horisont: snappa till hela dygn
   const { min, days } = useMemo(() => {
     const t = scheduled.flatMap((o) => [new Date(o.start_time!).getTime(), new Date(o.end_time!).getTime()]);
-    if (t.length === 0) return { min: 0, days: 0 };
-    const lo = new Date(Math.min(...t)); lo.setHours(0, 0, 0, 0);
-    const hi = new Date(Math.max(...t)); hi.setHours(0, 0, 0, 0);
-    const dayCount = Math.round((hi.getTime() - lo.getTime()) / DAY) + 1;
+    const base = t.length ? Math.min(...t) : Date.now();
+    const lo = new Date(base); lo.setHours(0, 0, 0, 0);
+    const hiBase = t.length ? Math.max(...t) : Date.now() + 6 * DAY;
+    const hi = new Date(hiBase); hi.setHours(0, 0, 0, 0);
+    const dayCount = Math.max(7, Math.round((hi.getTime() - lo.getTime()) / DAY) + 1);
     return { min: lo.getTime(), days: dayCount };
   }, [scheduled]);
 
@@ -68,23 +76,19 @@ export default function Gantt() {
   const xOf = (ms: number) => ((ms - min) / HOUR) * pxph;
 
   const rows: { id: number | null; name: string }[] = machines.map((m) => ({ id: m.id, name: m.name }));
-  if (scheduled.some((o) => o.machine_id == null)) rows.push({ id: null, name: "Otilldelad" });
   const rowIndexOf = (mid: number | null) => rows.findIndex((r) => r.id === mid);
 
   const opsByMachine: Record<string, Op[]> = {};
   for (const o of scheduled) (opsByMachine[String(o.machine_id)] ??= []).push(o);
 
-  // dagsinfo
   const dayList = useMemo(() =>
     Array.from({ length: days }, (_, i) => {
       const d = new Date(min + i * DAY);
-      return { i, ms: d.getTime(), weekend: d.getDay() === 0 || d.getDay() === 6, date: d };
+      return { i, weekend: d.getDay() === 0 || d.getDay() === 6, date: d };
     }), [min, days]);
 
-  // timtaktsteg beroende på zoom
   const hourStep = pxph >= 26 ? 2 : pxph >= 13 ? 4 : pxph >= 7 ? 6 : 12;
 
-  // beroendepilar
   const arrows = useMemo(() => {
     const byOrder: Record<number, Op[]> = {};
     for (const o of scheduled) (byOrder[o.order_id] ??= []).push(o);
@@ -107,57 +111,69 @@ export default function Gantt() {
   }, [scheduled, rows.length, min, pxph]);
 
   const now = Date.now();
-  const showNow = days > 0 && now >= min && now <= min + days * DAY;
+  const showNow = now >= min && now <= min + days * DAY;
 
   const barClass = (o: Op) => {
-    if (o.status === "locked") return "locked";
     if (o.status === "running") return "running";
     const due = dueByOrder[o.order_id];
     if (due && o.end_time && new Date(o.end_time).getTime() > due) return "late";
     return "ok";
   };
-  const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
 
-  // ---------- drag & drop ----------
+  // ---------- drag: backlog → tidslinje, och flytt på tidslinjen ----------
   const canvasRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ opId: number; startX: number; startY: number; origMs: number; origMachine: number | null } | null>(null);
-  const [drag, setDrag] = useState<{ opId: number; dx: number; dy: number } | null>(null);
+  const dragRef = useRef<Drag | null>(null);
+  const [drag, setDrag] = useState<(Drag & { dx: number; dy: number; cx: number; cy: number }) | null>(null);
 
-  function onBarMouseDown(e: React.MouseEvent, o: Op) {
+  function startDrag(d: Drag, e: React.MouseEvent) {
     e.preventDefault();
-    dragRef.current = { opId: o.id, startX: e.clientX, startY: e.clientY, origMs: new Date(o.start_time!).getTime(), origMachine: o.machine_id };
-    setDrag({ opId: o.id, dx: 0, dy: 0 });
+    dragRef.current = d;
+    setDrag({ ...d, dx: 0, dy: 0, cx: e.clientX, cy: e.clientY });
   }
+
   useEffect(() => {
     if (!drag) return;
     document.body.classList.add("dragging-active");
     const onMove = (e: MouseEvent) => {
-      const d = dragRef.current!; setDrag({ opId: d.opId, dx: e.clientX - d.startX, dy: e.clientY - d.startY });
+      const d = dragRef.current!;
+      setDrag({ ...d, dx: e.clientX - d.startX, dy: e.clientY - d.startY, cx: e.clientX, cy: e.clientY });
     };
     const onUp = (e: MouseEvent) => {
       const d = dragRef.current; dragRef.current = null; setDrag(null);
       document.body.classList.remove("dragging-active");
       if (!d) return;
-      const dx = e.clientX - d.startX;
-      const deltaMin = Math.round((dx / pxph) * 60 / SNAP_MIN) * SNAP_MIN;
-      const newMs = d.origMs + deltaMin * 60000;
-      let machineId = d.origMachine;
       const rect = canvasRef.current?.getBoundingClientRect();
+      let machineId: number | null = d.kind === "move" ? d.origMachine : null;
+      let rowValid = false;
       if (rect) {
         const idx = Math.floor((e.clientY - rect.top - HEAD_H) / ROW_H);
-        if (idx >= 0 && idx < rows.length && rows[idx].id != null) machineId = rows[idx].id;
+        if (idx >= 0 && idx < rows.length) { machineId = rows[idx].id; rowValid = true; }
       }
-      if (Math.abs(dx) > 4 || machineId !== d.origMachine) {
-        move.mutate({ id: d.opId, start: new Date(newMs).toISOString(), machine: machineId });
+      if (d.kind === "move") {
+        const dx = e.clientX - d.startX;
+        const deltaMin = Math.round((dx / pxph) * 60 / SNAP_MIN) * SNAP_MIN;
+        const newMs = d.origMs + deltaMin * 60000;
+        if (Math.abs(dx) > 4 || machineId !== d.origMachine) {
+          schedule.mutate({ id: d.opId, start: new Date(newMs).toISOString(), machine: machineId });
+        }
+      } else {
+        // ny placering från backlog — kräver träff på en maskinrad
+        if (rect && rowValid && machineId != null) {
+          const xInCanvas = e.clientX - rect.left - LABEL_W;
+          const rawMs = min + (xInCanvas / pxph) * HOUR;
+          const snapMs = Math.round(rawMs / (SNAP_MIN * 60000)) * (SNAP_MIN * 60000);
+          schedule.mutate({ id: d.opId, start: new Date(snapMs).toISOString(), machine: machineId });
+        }
       }
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag?.opId]);
+  }, [drag?.opId, drag?.kind]);
 
   const canvasH = HEAD_H + rows.length * ROW_H;
+  const busy = schedule.isPending || unschedule.isPending;
 
   return (
     <>
@@ -166,28 +182,48 @@ export default function Gantt() {
         <div className="gantt-toolbar">
           <button className="iconbtn" title="Zooma ut" onClick={() => setPxph((p) => Math.max(4, Math.round(p / 1.4)))}>−</button>
           <button className="iconbtn" title="Zooma in" onClick={() => setPxph((p) => Math.min(80, Math.round(p * 1.4)))}>+</button>
-          <button className="btn" disabled={run.isPending} onClick={() => run.mutate()}>
-            {run.isPending ? "Planerar…" : "▶ Kör planering"}
+          <button className="btn secondary" disabled={generate.isPending} onClick={() => generate.mutate()}>
+            {generate.isPending ? "Skapar…" : "＋ Förbered moment"}
           </button>
         </div>
       </div>
 
-      {scheduled.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="empty">
-          <div className="icon">🗓️</div>
-          <h3>Inget schema ännu</h3>
-          <div>Skapa order och tryck <strong>Kör planering</strong> så optimerar motorn schemat.</div>
+          <div className="icon">🏭</div>
+          <h3>Inga maskiner</h3>
+          <div>Lägg upp maskiner under <strong>Grunddata</strong> först.</div>
         </div>
       ) : (
         <>
+          {/* Backlog */}
+          <div className="backlog">
+            <div className="backlog-head">
+              <h2 style={{ margin: 0 }}>Moment att planera ({backlog.length})</h2>
+              <span className="drop-hint">Dra ett moment till en maskinrad i tidslinjen för att placera det.</span>
+            </div>
+            {backlog.length === 0 ? (
+              <div className="subtle">
+                Inga oplanerade moment. Skapa en order (så genereras dess moment) eller tryck <strong>Förbered moment</strong>.
+              </div>
+            ) : (
+              <div className="backlog-chips">
+                {backlog.map((o) => (
+                  <div key={o.id} className="chip" onMouseDown={(e) => startDrag({ kind: "new", opId: o.id, label: `${orderNo(o.order_id)} · ${o.name}`, startX: e.clientX, startY: e.clientY }, e)}>
+                    <strong>{orderNo(o.order_id)}</strong> · {o.name}
+                    <span className="dur">{fmtDur(o.duration_minutes)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Tidslinje */}
           <div className="gantt2">
             <div className="g-canvas" ref={canvasRef} style={{ width: LABEL_W + widthPx, height: canvasH }}>
-              {/* helg-skuggning */}
               {dayList.filter((d) => d.weekend).map((d) => (
                 <div key={"we" + d.i} className="g-weekend" style={{ left: LABEL_W + d.i * dayWidth, width: dayWidth, height: canvasH }} />
               ))}
-
-              {/* dygns- & timrutnät */}
               {dayList.map((d) => (
                 <div key={"dg" + d.i} className="g-daygrid" style={{ left: LABEL_W + d.i * dayWidth, height: canvasH }} />
               ))}
@@ -197,7 +233,6 @@ export default function Gantt() {
                 ))
               )}
 
-              {/* header */}
               <div className="g-head">
                 <div className="g-rowlabel" style={{ position: "absolute", zIndex: 6, height: HEAD_H }} />
                 {dayList.map((d) => (
@@ -207,14 +242,11 @@ export default function Gantt() {
                 ))}
                 {dayList.flatMap((d) =>
                   Array.from({ length: Math.floor(24 / hourStep) + 1 }, (_, k) => k * hourStep).filter((h) => h < 24).map((h) => (
-                    <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.i * dayWidth + h * pxph }}>
-                      {String(h).padStart(2, "0")}
-                    </div>
+                    <div key={`ht${d.i}-${h}`} className="g-hourtick" style={{ left: LABEL_W + d.i * dayWidth + h * pxph }}>{String(h).padStart(2, "0")}</div>
                   ))
                 )}
               </div>
 
-              {/* pilar */}
               <svg className="g-arrows" width={LABEL_W + widthPx} height={canvasH}>
                 <defs>
                   <marker id="arrow" markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto">
@@ -224,7 +256,6 @@ export default function Gantt() {
                 {arrows.map((a) => <path key={a.key} d={a.d} markerEnd="url(#arrow)" />)}
               </svg>
 
-              {/* rader */}
               {rows.map((row, ri) => {
                 const mc = row.id != null ? machineById[row.id] : null;
                 const shiftS = parseTime(mc?.shift_start);
@@ -232,28 +263,23 @@ export default function Gantt() {
                 return (
                   <div key={String(row.id)} className="g-row" style={{ top: HEAD_H + ri * ROW_H }}>
                     <div className="g-rowlabel">{row.name}</div>
-                    {/* gröna arbetstidsblock (mån–fre) */}
                     {mc && dayList.filter((d) => !d.weekend).map((d) => {
                       const startH = d.i * 24 + shiftS.h + shiftS.m / 60;
                       const endH = d.i * 24 + shiftE.h + shiftE.m / 60;
-                      return (
-                        <div key={"av" + d.i} className="g-avail"
-                          style={{ left: LABEL_W + startH * pxph, width: Math.max((endH - startH) * pxph, 0) }} />
-                      );
+                      return <div key={"av" + d.i} className="g-avail" style={{ left: LABEL_W + startH * pxph, width: Math.max((endH - startH) * pxph, 0) }} />;
                     })}
-                    {showNow && <div className="g-now" style={{ left: LABEL_W + xOf(now) }} />}
-                    {/* operationsstaplar */}
+                    {showNow && <div className="g-now" style={{ left: LABEL_W + xOf(now), height: ROW_H }} />}
                     {(opsByMachine[String(row.id)] ?? []).map((o) => {
                       const s = new Date(o.start_time!).getTime();
                       const e = new Date(o.end_time!).getTime();
                       const w = Math.max(((e - s) / HOUR) * pxph, 8);
-                      const isDrag = drag?.opId === o.id;
+                      const isDrag = drag?.kind === "move" && drag.opId === o.id;
                       return (
                         <div key={o.id} className={"g-bar " + barClass(o) + (isDrag ? " dragging" : "")}
                           style={{ left: LABEL_W + xOf(s), width: w, transform: isDrag ? `translate(${drag!.dx}px, ${drag!.dy}px)` : undefined }}
-                          title={`${orderNo(o.order_id)} · ${o.name}\n${new Date(s).toLocaleString("sv-SE")} – ${new Date(e).toLocaleTimeString("sv-SE")}\nDra för att flytta · dubbelklick = lås`}
-                          onMouseDown={(ev) => onBarMouseDown(ev, o)}
-                          onDoubleClick={() => lock.mutate(o.id)}>
+                          title={`${orderNo(o.order_id)} · ${o.name}\n${new Date(s).toLocaleString("sv-SE")} – ${new Date(e).toLocaleTimeString("sv-SE")}\nDra för att flytta · dubbelklick = tillbaka till backlog`}
+                          onMouseDown={(ev) => startDrag({ kind: "move", opId: o.id, label: o.name, origMs: s, origMachine: o.machine_id, startX: ev.clientX, startY: ev.clientY }, ev)}
+                          onDoubleClick={() => unschedule.mutate(o.id)}>
                           {orderNo(o.order_id)} · {o.name}
                         </div>
                       );
@@ -269,43 +295,16 @@ export default function Gantt() {
             <span><span className="swatch" style={{ background: "var(--slate)" }} />Planerad</span>
             <span><span className="swatch" style={{ background: "#2563eb" }} />Pågår</span>
             <span><span className="swatch" style={{ background: "#ce0e2d" }} />Försenad</span>
-            <span><span className="swatch" style={{ background: "#111418" }} />Låst</span>
-            <span style={{ marginLeft: "auto" }}>💡 Dra en operation i sidled (flytta i tid) eller till annan rad (byt maskin) — schemat planeras om automatiskt.</span>
-          </div>
-
-          <div className="section">
-            <h2>Order i schemat</h2>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>Ordernr</th><th>Antal</th><th>Prioritet</th><th>Leveransdatum</th><th>Operationer</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                  {orders.map((o) => {
-                    const opsForOrder = scheduled.filter((x) => x.order_id === o.id);
-                    const due = new Date(o.due_date).getTime();
-                    const late = opsForOrder.some((x) => new Date(x.end_time!).getTime() > due);
-                    return (
-                      <tr key={o.id}>
-                        <td style={{ fontWeight: 600 }}>{o.order_no}</td>
-                        <td>{o.quantity}</td>
-                        <td>{o.priority}</td>
-                        <td style={{ color: late ? "var(--red)" : undefined, fontWeight: late ? 600 : 400 }}>
-                          {new Date(o.due_date).toLocaleDateString("sv-SE")}
-                        </td>
-                        <td>{opsForOrder.length}</td>
-                        <td><span className={"badge " + o.status}>{o.status}</span></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <span style={{ marginLeft: "auto" }}>💡 Dubbelklicka på en stapel för att lägga tillbaka momentet i backloggen.</span>
           </div>
         </>
       )}
 
-      {move.isPending && <div className="replan-toast">⟳ Planerar om runt din flytt…</div>}
+      {/* dragghost för backlog-moment */}
+      {drag?.kind === "new" && (
+        <div className="chip-ghost" style={{ left: drag.cx + 10, top: drag.cy + 10 }}>{drag.label}</div>
+      )}
+      {busy && <div className="replan-toast">⟳ Uppdaterar schema…</div>}
     </>
   );
 }

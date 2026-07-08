@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Operation, OrderStatus, ProductionOrder, ScheduleVersion
+from app.models import Operation, OrderStatus, ProductionOrder
 from app.security import get_current_user
 from app.services.analytics import bottlenecks, machine_utilization
 
@@ -29,28 +29,29 @@ def kpi(db: Session = Depends(get_db)):
         )
     ) or 0
 
-    active_ver = db.scalar(select(ScheduleVersion).where(ScheduleVersion.is_active.is_(True)))
+    # order räknas sen om dess sista schemalagda moment slutar efter leveransdatum
     late = 0
-    if active_ver:
-        # order räknas sen om sista schemalagda operation slutar efter due_date
-        rows = db.execute(
-            select(Operation.order_id, func.max(Operation.end_time))
-            .where(Operation.version_id == active_ver.id)
-            .group_by(Operation.order_id)
-        ).all()
-        for order_id, last_end in rows:
-            order = db.get(ProductionOrder, order_id)
-            if order and last_end and last_end > order.due_date:
+    scheduled = 0
+    rows = db.execute(
+        select(Operation.order_id, func.max(Operation.end_time))
+        .where(Operation.start_time.is_not(None))
+        .group_by(Operation.order_id)
+    ).all()
+    for order_id, last_end in rows:
+        order = db.get(ProductionOrder, order_id)
+        if order and last_end:
+            scheduled += 1
+            if last_end > order.due_date:
                 late += 1
 
-    on_time = (active - late) / active * 100 if active else 100.0
+    on_time = (scheduled - late) / scheduled * 100 if scheduled else 100.0
     return {
         "orders_total": total,
         "orders_active": active,
         "orders_done": done,
         "orders_late": late,
         "delivery_precision_pct": round(on_time, 1),
-        "active_schedule_version": active_ver.version if active_ver else None,
+        "orders_scheduled": scheduled,
     }
 
 

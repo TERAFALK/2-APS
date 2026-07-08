@@ -33,7 +33,7 @@ export default function Dashboard() {
           tone={precision != null && precision >= 95 ? "green" : precision != null && precision < 80 ? "red" : undefined}
         />
         <Kpi label="Totalt order" value={data?.orders_total ?? "–"} />
-        <Kpi label="Schemaversion" value={data?.active_schedule_version ?? "–"} />
+        <Kpi label="Schemalagda order" value={data?.orders_scheduled ?? "–"} />
       </div>
 
       <div className="section">

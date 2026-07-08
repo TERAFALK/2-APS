@@ -48,6 +48,14 @@ export const api = {
   products: () => request<any[]>("/products"),
   runPlan: () => request<any>("/plan/run", { method: "POST" }),
   planDiff: () => request<any>("/plan/diff"),
+  generateMoments: () => request<any>("/operations/generate-missing", { method: "POST" }),
+  scheduleManual: (id: number, startIso: string, machineId: number | null) => {
+    const p = new URLSearchParams({ start: startIso });
+    if (machineId != null) p.set("machine_id", String(machineId));
+    return request<any>(`/operations/${id}/manual?${p}`, { method: "PATCH" });
+  },
+  unscheduleMoment: (id: number) =>
+    request<any>(`/operations/${id}/manual?unschedule=true`, { method: "PATCH" }),
   lockOperation: (id: number) =>
     request<any>(`/operations/${id}/lock`, { method: "POST" }),
   moveOperation: (id: number, startIso: string, machineId?: number | null) => {
