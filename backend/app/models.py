@@ -108,6 +108,17 @@ class Machine(Base):
     machine_type: Mapped[MachineType] = relationship(back_populates="machines")
 
 
+class MaintenanceWindow(Base):
+    """Planerat underhåll då en maskin inte är tillgänglig."""
+    __tablename__ = "maintenance_windows"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id"))
+    start_time: Mapped[datetime] = mapped_column(DateTime)
+    end_time: Mapped[datetime] = mapped_column(DateTime)
+    reason: Mapped[str] = mapped_column(String(255), default="Underhåll")
+    machine: Mapped[Machine] = relationship()
+
+
 class Skill(Base):
     __tablename__ = "skills"
     id: Mapped[int] = mapped_column(primary_key=True)

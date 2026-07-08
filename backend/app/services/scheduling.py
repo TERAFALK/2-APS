@@ -9,11 +9,43 @@ from sqlalchemy.orm import Session
 
 from app.aps.engine import OpInput, OrderInput, ProblemInput, solve
 from app.models import (
-    Machine, Operation, OperationStatus, OrderStatus, ProductionOrder,
+    Machine, MaintenanceWindow, Operation, OperationStatus, OrderStatus, ProductionOrder,
     RoutingStep, Schedule, ScheduleVersion,
 )
 
 PLANNABLE = (OrderStatus.released, OrderStatus.scheduled, OrderStatus.in_progress)
+
+
+def _minute(dt: datetime, horizon_start: datetime) -> int:
+    return int((dt - horizon_start).total_seconds() // 60)
+
+
+def build_downtime(
+    db: Session, machines: list[Machine], horizon_start: datetime, horizon_days: int
+) -> dict[int, list[tuple[int, int]]]:
+    """Bygger otillgänglighetsfönster per maskin: tid utanför skift varje dygn + underhåll."""
+    downtime: dict[int, list[tuple[int, int]]] = {}
+    for m in machines:
+        windows: list[tuple[int, int]] = []
+        for day in range(horizon_days):
+            day_start = (horizon_start + timedelta(days=day)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            shift_start = day_start + timedelta(
+                hours=m.shift_start.hour, minutes=m.shift_start.minute
+            )
+            shift_end = day_start + timedelta(hours=m.shift_end.hour, minutes=m.shift_end.minute)
+            # icke-arbetstid: från dygnets start till skiftstart, och från skiftslut till nästa dygn
+            windows.append((_minute(day_start, horizon_start), _minute(shift_start, horizon_start)))
+            next_day = day_start + timedelta(days=1)
+            windows.append((_minute(shift_end, horizon_start), _minute(next_day, horizon_start)))
+        downtime[m.id] = windows
+
+    for mw in db.scalars(select(MaintenanceWindow)).all():
+        downtime.setdefault(mw.machine_id, []).append(
+            (_minute(mw.start_time, horizon_start), _minute(mw.end_time, horizon_start))
+        )
+    return downtime
 
 
 def _get_or_create_schedule(db: Session) -> Schedule:
@@ -105,6 +137,7 @@ def build_problem(db: Session, horizon_start: datetime, horizon_days: int) -> tu
         operations=op_inputs,
         machines=[m.id for m in machines],
         horizon=max(horizon_minutes, 1),
+        downtime=build_downtime(db, machines, horizon_start, horizon_days),
     )
     return problem, op_index
 

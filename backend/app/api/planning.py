@@ -3,10 +3,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datetime import datetime
+
 from app.db import get_db
-from app.models import Operation, OperationStatus, ProductionOrder, Role, ScheduleVersion
+from app.models import (
+    MaintenanceWindow, Operation, OperationStatus, ProductionOrder, Role, ScheduleVersion,
+)
 from app.schemas import OperationOut, OrderIn, OrderOut, PlanResult
 from app.security import get_current_user, require_roles
+from app.services.diff import diff_latest, diff_versions
 from app.services.scheduling import run_planning
 
 router = APIRouter(tags=["planning"], dependencies=[Depends(get_current_user)])
@@ -59,6 +64,28 @@ def replan_async(reason: str = "event", horizon_days: int = 30):
     from app.worker import replan_task
     task = replan_task.delay(reason=reason, horizon_days=horizon_days)
     return {"task_id": task.id, "queued": True}
+
+
+@router.get("/plan/diff")
+def plan_diff(base: int | None = None, new: int | None = None, db: Session = Depends(get_db)):
+    """Skillnad mellan två schemaversioner. Utan parametrar: aktiv vs föregående."""
+    if base and new:
+        return diff_versions(db, base, new)
+    result = diff_latest(db)
+    if result is None:
+        return {"total_changes": 0, "changes": [], "message": "Endast en version finns."}
+    return result
+
+
+@router.post("/maintenance", dependencies=[Depends(planner)])
+def add_maintenance(
+    machine_id: int, start: datetime, end: datetime, reason: str = "Underhåll",
+    db: Session = Depends(get_db),
+):
+    """Registrera underhållsfönster. Kör om planeringen för att ta hänsyn till det."""
+    mw = MaintenanceWindow(machine_id=machine_id, start_time=start, end_time=end, reason=reason)
+    db.add(mw); db.commit(); db.refresh(mw)
+    return {"id": mw.id, "machine_id": machine_id, "start": start, "end": end}
 
 
 @router.post(

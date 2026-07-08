@@ -39,12 +39,23 @@ export const api = {
   },
   me: () => request<any>("/auth/me"),
   kpi: () => request<any>("/dashboard/kpi"),
+  utilization: () => request<any[]>("/dashboard/utilization"),
+  bottlenecks: () => request<any[]>("/dashboard/bottlenecks"),
   orders: () => request<any[]>("/orders"),
   operations: () => request<any[]>("/operations"),
   machines: () => request<any[]>("/machines"),
+  machineTypes: () => request<any[]>("/machine-types"),
+  products: () => request<any[]>("/products"),
   runPlan: () => request<any>("/plan/run", { method: "POST" }),
+  planDiff: () => request<any>("/plan/diff"),
   lockOperation: (id: number) =>
     request<any>(`/operations/${id}/lock`, { method: "POST" }),
+  createOrder: (body: any) =>
+    request<any>("/orders", { method: "POST", body: JSON.stringify(body) }),
+  createProduct: (body: any) =>
+    request<any>("/products", { method: "POST", body: JSON.stringify(body) }),
+  createMachine: (body: any) =>
+    request<any>("/machines", { method: "POST", body: JSON.stringify(body) }),
 };
 
 export const isLoggedIn = () => !!token();

@@ -62,7 +62,14 @@ cd backend && python -m pytest        # inkl. test av planeringsmotorn
 
 ## Roadmap
 
-- **Fas 1 (MVP – nu):** användare/RBAC, grunddata, order, operationer, planeringsmotor, Gantt, dashboard, Docker Compose. ✅ grund lagd
-- **Fas 2:** kalender/skift-constraints, sekvensberoende ställtider, auto-omplanering med diff, rapporter, integrations-API, Redis-pub/sub-realtid.
+- **Fas 1 (MVP):** användare/RBAC, grunddata, order, operationer, planeringsmotor, Gantt, dashboard, Docker Compose. ✅
+- **Fas 2 (pågår):**
+  - ✅ skift-/kalender-constraints (maskiner planeras bara under arbetstid)
+  - ✅ underhållsfönster (`POST /api/maintenance`) blockerar maskiner
+  - ✅ äkta sekvensberoende ställtider (circuit per maskin i CP-SAT)
+  - ✅ om-planering med plan-diff (`GET /api/plan/diff`, vy "Om-planering")
+  - ✅ analys: maskinutnyttjande + flaskhalsar (`/api/dashboard/utilization`, `/bottlenecks`)
+  - ✅ skapa-formulär för order i frontend
+  - kvar: rapport-export, Redis-pub/sub-realtid, integrations-API-spec
 - **Fas 3:** ERP (Monitor/SAP/Dynamics/Jeeves), MES, OPC UA/MQTT, AI (förseningsprognos, inlärda operationstider).
 ```

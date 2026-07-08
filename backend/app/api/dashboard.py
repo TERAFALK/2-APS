@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Operation, OrderStatus, ProductionOrder, ScheduleVersion
 from app.security import get_current_user
+from app.services.analytics import bottlenecks, machine_utilization
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"],
                    dependencies=[Depends(get_current_user)])
@@ -51,3 +52,13 @@ def kpi(db: Session = Depends(get_db)):
         "delivery_precision_pct": round(on_time, 1),
         "active_schedule_version": active_ver.version if active_ver else None,
     }
+
+
+@router.get("/utilization")
+def utilization(db: Session = Depends(get_db)):
+    return machine_utilization(db)
+
+
+@router.get("/bottlenecks")
+def get_bottlenecks(threshold: float = 85.0, db: Session = Depends(get_db)):
+    return bottlenecks(db, threshold_pct=threshold)

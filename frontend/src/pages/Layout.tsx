@@ -14,6 +14,7 @@ export default function Layout() {
             Dashboard
           </NavLink>
           <NavLink to="/gantt">Gantt-planering</NavLink>
+          <NavLink to="/replan">Om-planering</NavLink>
           <NavLink to="/orders">Order</NavLink>
         </nav>
         <div className="spacer" />
