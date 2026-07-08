@@ -18,13 +18,20 @@ Se [ARCHITECTURE.md](ARCHITECTURE.md) för arkitektur och tekniska val.
 ## Snabbstart (produktion)
 
 ```bash
-cp .env.example .env          # fyll i DOMAIN, TLS_EMAIL, lösenord, JWT_SECRET
-docker compose up -d --build  # bygger och startar allt bakom Caddy (80/443)
+cp .env.example .env          # fyll i SITE_ADDRESS, lösenord, JWT_SECRET
+docker compose up -d --build
 docker compose exec api python -m app.seed   # (valfritt) demodata
 ```
 
-Öppna `https://<DOMAIN>` och logga in med `FIRST_ADMIN_EMAIL` / `FIRST_ADMIN_PASSWORD`.
+Logga in med `FIRST_ADMIN_EMAIL` / `FIRST_ADMIN_PASSWORD`.
 Migrationer körs automatiskt (`alembic upgrade head`) när API-containern startar.
+
+### Två drift-lägen (TLS)
+
+| Läge | `.env` | Vem sköter certet |
+|---|---|---|
+| **Kunddrift** | `SITE_ADDRESS=https://aps.kund.se`, `HTTP_PORT=80`, `HTTPS_PORT=443` | Caddy skaffar & förnyar Let's Encrypt automatiskt — inget externt behövs |
+| **Labb bakom NPM** | `SITE_ADDRESS=:80`, `HTTP_PORT=8080`, `HTTPS_PORT=8443` | Din Nginx Proxy Manager terminerar TLS och forwardar till `server:8080` |
 
 ### Lokal utveckling
 

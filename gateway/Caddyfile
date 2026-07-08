@@ -1,9 +1,18 @@
-# Caddy gateway — automatisk HTTPS med Let's Encrypt (auto-förnyelse).
-# Endast denna tjänst exponeras externt. Allt internt sker på docker-nätet "internal".
+# Caddy gateway.
+#
+# Beteendet styrs av SITE_ADDRESS i .env:
+#   * SITE_ADDRESS=https://aps.kund.se  → Caddy skaffar & förnyar Let's Encrypt-cert automatiskt
+#                                         (kunddrift: TLS sköts i stacken, ingen extern proxy behövs)
+#   * SITE_ADDRESS=:80                  → Caddy kör ren HTTP, ingen ACME. Låt din NPM/reverse proxy
+#                                         terminera TLS och forwarda hit (labb-drift).
+#
+# TLS_EMAIL används av Let's Encrypt för kontoregistrering och utgångsvarningar.
 
-{$DOMAIN} {
-	tls {$TLS_EMAIL}
+{
+	email {$TLS_EMAIL}
+}
 
+{$SITE_ADDRESS} {
 	encode gzip zstd
 
 	# API (REST) och WebSocket → FastAPI
@@ -20,6 +29,7 @@
 	}
 
 	header {
+		# HSTS skickas bara när Caddy själv termineral TLS (ignoreras ändå över ren HTTP)
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
