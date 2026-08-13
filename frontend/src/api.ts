@@ -54,6 +54,7 @@ export const api = {
   orders: () => request<any[]>("/orders"),
   createOrder: (b: any) => request<any>("/orders", { method: "POST", body: body(b) }),
   deleteOrder: (id: number) => request<void>(`/orders/${id}`, { method: "DELETE" }),
+  setChainLock: (id: number, value: boolean) => request<any>(`/orders/${id}/chain-lock?value=${value}`, { method: "PATCH" }),
 
   // faser (moment)
   operations: () => request<any[]>("/operations"),

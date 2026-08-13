@@ -162,6 +162,42 @@ tbody tr:hover { background: #fbfcfd; }
 .flag { color: var(--red); font-weight: 700; font-size: 12px; }
 .ot-tag { color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 1px 7px; font-size: 12px; font-weight: 700; margin-left: 8px; }
 
+/* ---------------- Sök, taggar, kort-huvud, val ---------------- */
+.stack { display: flex; flex-direction: column; gap: 20px; }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.card-head h2 { margin: 0; }
+
+.searchbar { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 14px; margin-bottom: 14px; box-shadow: var(--shadow); }
+.searchbar input { flex: 1; border: none; padding: 10px 0; font-size: 14px; background: transparent; }
+.searchbar input:focus { outline: none; box-shadow: none; }
+.search-icon { opacity: 0.45; font-size: 13px; }
+
+.tag-row { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.tag { background: #eef2ff; color: #4338ca; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
+
+.check { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; color: var(--text); margin: 4px 0 14px; cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--red); cursor: pointer; }
+
+.pick-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.pick { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border-strong); border-radius: 8px; padding: 7px 11px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; background: #fff; transition: all 0.12s; }
+.pick input { width: 15px; height: 15px; accent-color: var(--red); cursor: pointer; }
+.pick.on { border-color: var(--red); color: var(--red); background: var(--red-soft); }
+
+/* sökbar dropdown */
+.ss { position: relative; }
+.ss-control { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: #fff; font-size: 14px; font-family: inherit; color: var(--text); cursor: pointer; text-align: left; }
+.ss-control.open, .ss-control:focus { border-color: var(--red); box-shadow: 0 0 0 3px rgba(206,14,45,0.10); outline: none; }
+.ss-placeholder { color: var(--muted-light); }
+.ss-caret { color: var(--muted-light); font-size: 11px; }
+.ss-menu { position: absolute; z-index: 50; top: calc(100% + 4px); left: 0; right: 0; background: #fff; border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg); padding: 6px; }
+.ss-search { width: 100%; margin-bottom: 6px; }
+.ss-list { max-height: 230px; overflow-y: auto; }
+.ss-item { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; border: none; background: none; text-align: left; padding: 8px 10px; border-radius: 7px; font-size: 14px; color: var(--text); cursor: pointer; }
+.ss-item:hover { background: var(--bg); }
+.ss-item.sel { background: var(--red-soft); color: var(--red); font-weight: 600; }
+.ss-sub { color: var(--muted-light); font-size: 12px; }
+.ss-empty { padding: 12px 10px; color: var(--muted-light); font-size: 13px; text-align: center; }
+
 /* ---------------- Designputs ---------------- */
 .card { transition: box-shadow 0.15s, border-color 0.15s; }
 tbody tr { transition: background 0.1s; }

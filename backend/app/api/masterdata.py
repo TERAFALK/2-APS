@@ -73,14 +73,23 @@ def create_machine_type(payload: MachineTypeIn, db: Session = Depends(get_db)):
 
 
 # --- machines ---
+def _apply_machine(db: Session, m: Machine, payload: MachineIn) -> None:
+    data = payload.model_dump()
+    ids = data.pop("moment_type_ids", []) or []
+    for k, v in data.items():
+        setattr(m, k, v)
+    m.moment_types = list(db.scalars(select(MomentType).where(MomentType.id.in_(ids))).all()) if ids else []
+
+
 @router.get("/machines", response_model=list[MachineOut])
 def list_machines(db: Session = Depends(get_db)):
-    return db.scalars(select(Machine)).all()
+    return db.scalars(select(Machine).order_by(Machine.name)).all()
 
 
 @router.post("/machines", response_model=MachineOut, dependencies=[Depends(planner)])
 def create_machine(payload: MachineIn, db: Session = Depends(get_db)):
-    m = Machine(**payload.model_dump())
+    m = Machine(name=payload.name)
+    _apply_machine(db, m, payload)
     db.add(m); db.commit(); db.refresh(m)
     return m
 
@@ -163,8 +172,7 @@ def delete_machine_type(tid: int, db: Session = Depends(get_db)):
 @router.put("/machines/{mid}", response_model=MachineOut, dependencies=[Depends(planner)])
 def update_machine(mid: int, payload: MachineIn, db: Session = Depends(get_db)):
     m = _get_or_404(db, Machine, mid, "Maskin")
-    for k, v in payload.model_dump().items():
-        setattr(m, k, v)
+    _apply_machine(db, m, payload)
     db.commit(); db.refresh(m)
     return m
 

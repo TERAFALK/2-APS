@@ -13,7 +13,8 @@ import enum
 from datetime import datetime, time
 
 from sqlalchemy import (
-    Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, Time, UniqueConstraint,
+    Boolean, Column, DateTime, Enum, Float, ForeignKey, Integer, String, Table, Text, Time,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -113,6 +114,18 @@ class MomentType(Base):
     __tablename__ = "moment_types"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True)
+    machines: Mapped[list[Machine]] = relationship(
+        secondary="machine_moment_types", back_populates="moment_types"
+    )
+
+
+# vilka moment en maskin kan utföra — styr var en fas får placeras
+machine_moment_types = Table(
+    "machine_moment_types",
+    Base.metadata,
+    Column("machine_id", ForeignKey("machines.id", ondelete="CASCADE"), primary_key=True),
+    Column("moment_type_id", ForeignKey("moment_types.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class Machine(Base):
@@ -120,11 +133,19 @@ class Machine(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True)
     machine_type_id: Mapped[int | None] = mapped_column(ForeignKey("machine_types.id"), nullable=True)
-    # Enkel arbetstidsmodell för MVP (utökas med kalender/undantag i Fas 2)
     shift_start: Mapped[time] = mapped_column(Time, default=time(7, 0))
     shift_end: Mapped[time] = mapped_column(Time, default=time(16, 0))
+    lunch_start: Mapped[time | None] = mapped_column(Time, nullable=True)
+    lunch_end: Mapped[time | None] = mapped_column(Time, nullable=True)
     available: Mapped[bool] = mapped_column(Boolean, default=True)
     machine_type: Mapped[MachineType] = relationship(back_populates="machines")
+    moment_types: Mapped[list[MomentType]] = relationship(
+        secondary="machine_moment_types", back_populates="machines", lazy="selectin"
+    )
+
+    @property
+    def moment_type_ids(self) -> list[int]:
+        return [mt.id for mt in self.moment_types]
 
 
 class MaintenanceWindow(Base):
@@ -181,6 +202,8 @@ class ProductionOrder(Base):
     priority: Mapped[str] = mapped_column(String(16), default=OrderPriority.medium.value)
     due_date: Mapped[datetime] = mapped_column(DateTime)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.draft)
+    # när den är på flyttas orderns övriga faser med när en fas dras i schemat
+    chain_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     customer: Mapped[Customer | None] = relationship(back_populates="orders")
@@ -222,7 +245,8 @@ class Operation(Base):
     routing_step_id: Mapped[int | None] = mapped_column(ForeignKey("routing_steps.id"), nullable=True)
     sequence: Mapped[int] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String(255))
-    # vilken maskintyp momentet kräver (kopieras från routing-steget) → styr var det får placeras
+    # vilket moment fasen avser → styr vilka maskiner den får placeras på
+    moment_type_id: Mapped[int | None] = mapped_column(ForeignKey("moment_types.id"), nullable=True)
     machine_type_id: Mapped[int | None] = mapped_column(ForeignKey("machine_types.id"), nullable=True)
     machine_id: Mapped[int | None] = mapped_column(ForeignKey("machines.id"), nullable=True)
     start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

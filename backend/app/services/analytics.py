@@ -80,6 +80,8 @@ def current_load(db: Session) -> list[dict]:
     result = []
     for m in machines:
         shift_min = (m.shift_end.hour * 60 + m.shift_end.minute) - (m.shift_start.hour * 60 + m.shift_start.minute)
+        if m.lunch_start and m.lunch_end:
+            shift_min -= max(0, (m.lunch_end.hour * 60 + m.lunch_end.minute) - (m.lunch_start.hour * 60 + m.lunch_start.minute))
         capacity = max(1, shift_min * 5)
         m_ops = [o for o in ops if o.machine_id == m.id]
         busy = sum(o.duration_minutes for o in m_ops)

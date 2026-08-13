@@ -12,8 +12,14 @@ export default function Customers() {
   const nav = useNavigate();
   const { data: customers = [] } = useQuery<any[]>({ queryKey: ["customers"], queryFn: api.customers });
   const [showNew, setShowNew] = useState(false);
+  const [q, setQ] = useState("");
   const [c, setC] = useState(EMPTY);
   const f = (k: string) => (e: any) => setC({ ...c, [k]: e.target.value });
+  const term = q.trim().toLowerCase();
+  const shown = term
+    ? customers.filter((cu) => [cu.name, cu.customer_no, cu.org_no, cu.contact_email, cu.contact_phone]
+        .filter(Boolean).join(" ").toLowerCase().includes(term))
+    : customers;
 
   const create = useMutation({
     mutationFn: () => api.createCustomer(c),
@@ -28,14 +34,24 @@ export default function Customers() {
         <button className="btn" onClick={() => setShowNew(true)}>＋ Ny kund</button>
       </div>
 
+      {customers.length > 0 && (
+        <div className="searchbar">
+          <span className="search-icon">🔍</span>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Sök kund, kundnummer, org.nr eller kontakt…" />
+          {q && <button className="linkbtn" onClick={() => setQ("")}>Rensa</button>}
+        </div>
+      )}
+
       {customers.length === 0 ? (
         <div className="empty"><div className="icon">👥</div><h3>Inga kunder ännu</h3><div>Lägg till din första kund uppe till höger.</div></div>
+      ) : shown.length === 0 ? (
+        <div className="empty"><div className="icon">🔍</div><h3>Inga träffar</h3><div>Ingen kund matchar ”{q}”.</div></div>
       ) : (
         <div className="table-wrap">
           <table>
             <thead><tr><th>Kund</th><th>Kundnr</th><th>Org.nr</th><th>Kontakt</th></tr></thead>
             <tbody>
-              {customers.map((cu) => (
+              {shown.map((cu) => (
                 <tr key={cu.id} style={{ cursor: "pointer" }} onClick={() => nav(`/customers/${cu.id}`)}>
                   <td style={{ fontWeight: 600 }}>{cu.name}</td>
                   <td>{cu.customer_no || "–"}</td>

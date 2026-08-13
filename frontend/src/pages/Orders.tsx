@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import Modal from "../components/Modal";
+import SearchSelect from "../components/SearchSelect";
 import { ORDER_STATUS, PRIORITIES, prioLabel, onErr } from "../lib";
 
 export default function Orders() {
@@ -14,6 +15,7 @@ export default function Orders() {
   const EMPTY = { order_no: "", customer_id: 0, priority: "medium", due_date: "" };
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState(EMPTY);
+  const [q, setQ] = useState("");
 
   const create = useMutation({
     mutationFn: () => api.createOrder({ order_no: form.order_no, customer_id: form.customer_id || null, priority: form.priority, due_date: new Date(form.due_date).toISOString() }),
@@ -21,6 +23,11 @@ export default function Orders() {
     onError: onErr,
   });
   const custName = (id: number | null) => customers.find((c) => c.id === id)?.name ?? "–";
+  const term = q.trim().toLowerCase();
+  const shown = term
+    ? orders.filter((o) => [o.order_no, custName(o.customer_id), prioLabel(o.priority)]
+        .join(" ").toLowerCase().includes(term))
+    : orders;
 
   return (
     <>
@@ -29,14 +36,24 @@ export default function Orders() {
         <button className="btn" onClick={() => setShowNew(true)}>＋ Ny order</button>
       </div>
 
+      {orders.length > 0 && (
+        <div className="searchbar">
+          <span className="search-icon">🔍</span>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Sök ordernummer eller kund…" />
+          {q && <button className="linkbtn" onClick={() => setQ("")}>Rensa</button>}
+        </div>
+      )}
+
       {orders.length === 0 ? (
         <div className="empty"><div className="icon">📋</div><h3>Inga order ännu</h3><div>Skapa din första order uppe till höger.</div></div>
+      ) : shown.length === 0 ? (
+        <div className="empty"><div className="icon">🔍</div><h3>Inga träffar</h3><div>Ingen order matchar ”{q}”.</div></div>
       ) : (
         <div className="table-wrap">
           <table>
             <thead><tr><th>Ordernr</th><th>Kund</th><th>Prioritet</th><th>Leverans</th><th>Status</th></tr></thead>
             <tbody>
-              {orders.map((o) => (
+              {shown.map((o) => (
                 <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => nav(`/orders/${o.id}`)}>
                   <td style={{ fontWeight: 600 }}>{o.order_no}</td>
                   <td>{custName(o.customer_id)}</td>
@@ -53,12 +70,14 @@ export default function Orders() {
       {showNew && (
         <Modal title="Ny order" onClose={() => setShowNew(false)}>
           <label className="field">Ordernummer<input value={form.order_no} onChange={(e) => setForm({ ...form, order_no: e.target.value })} /></label>
-          <label className="field">Kund
-            <select value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: Number(e.target.value) })}>
-              <option value={0}>— ingen —</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </label>
+          <div className="field">Kund
+            <SearchSelect
+              items={customers.map((c) => ({ id: c.id, label: c.name, sub: c.customer_no }))}
+              value={form.customer_id || null}
+              onChange={(id) => setForm({ ...form, customer_id: id ?? 0 })}
+              placeholder="Sök kund…" emptyLabel="— ingen kund —"
+            />
+          </div>
           <div className="form-row">
             <label className="field" style={{ flex: 1 }}>Prioritet
               <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>

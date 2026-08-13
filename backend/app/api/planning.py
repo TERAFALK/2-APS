@@ -21,6 +21,17 @@ router = APIRouter(tags=["planning"], dependencies=[Depends(get_current_user)])
 planner = require_roles(Role.admin, Role.planner)
 
 
+def _assert_machine_supports(db: Session, machine_id: int | None, op: Operation) -> None:
+    """En fas får bara placeras på en maskin som klarar fasens moment."""
+    if machine_id is None or op.moment_type_id is None:
+        return
+    machine = db.get(Machine, machine_id)
+    if machine is None:
+        raise HTTPException(status_code=404, detail="Maskin saknas")
+    if op.moment_type_id not in {mt.id for mt in machine.moment_types}:
+        raise HTTPException(status_code=422, detail=f"{machine.name} kan inte utföra momentet {op.name}")
+
+
 @router.get("/orders", response_model=list[OrderOut])
 def list_orders(customer_id: int | None = None, db: Session = Depends(get_db)):
     q = select(ProductionOrder).order_by(ProductionOrder.due_date)
@@ -36,6 +47,17 @@ def create_order(payload: OrderIn, db: Session = Depends(get_db)):
     from app.models import OrderStatus
     order = ProductionOrder(**payload.model_dump(), status=OrderStatus.released)
     db.add(order); db.commit(); db.refresh(order)
+    return order
+
+
+@router.patch("/orders/{order_id}/chain-lock", response_model=OrderOut, dependencies=[Depends(planner)])
+def set_chain_lock(order_id: int, value: bool, db: Session = Depends(get_db)):
+    """Länka orderns faser: när en fas flyttas i schemat följer övriga med lika mycket."""
+    order = db.get(ProductionOrder, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order saknas")
+    order.chain_locked = value
+    db.commit(); db.refresh(order)
     return order
 
 
@@ -58,6 +80,7 @@ def add_phase(order_id: int, payload: PhaseIn, db: Session = Depends(get_db)):
         order_id=order_id,
         sequence=(last or 0) + 10,
         name=payload.name,
+        moment_type_id=payload.moment_type_id,
         machine_id=payload.machine_id,
         duration_minutes=max(1, round(payload.hours * 60)),
         status=OperationStatus.planned,
@@ -72,6 +95,8 @@ def update_phase(op_id: int, payload: PhaseIn, db: Session = Depends(get_db)):
     if not op:
         raise HTTPException(status_code=404, detail="Fas saknas")
     op.name = payload.name
+    if payload.moment_type_id is not None:
+        op.moment_type_id = payload.moment_type_id
     op.machine_id = payload.machine_id
     op.duration_minutes = max(1, round(payload.hours * 60))
     if op.start_time:
@@ -128,8 +153,9 @@ def resize_phase(op_id: int, hours: float, start: datetime | None = None, db: Se
         elif delta > 0:
             db.add(Operation(
                 order_id=op.order_id, sequence=op.sequence, name=op.name,
+                moment_type_id=op.moment_type_id,
                 machine_id=op.machine_id, duration_minutes=delta,
-                status=OperationStatus.planned,  # backlog (ingen starttid)
+                status=OperationStatus.planned,  # oplanerad (ingen starttid)
             ))
     db.commit()
     return {"new_minutes": new_min}
@@ -142,6 +168,7 @@ def place_part(op_id: int, start: datetime, hours: float, machine_id: int | None
     op = db.get(Operation, op_id)
     if not op:
         raise HTTPException(status_code=404, detail="Fas saknas")
+    _assert_machine_supports(db, machine_id, op)
     part = max(15, round(hours * 60))
     total = op.duration_minutes
     if part >= total:
@@ -151,9 +178,10 @@ def place_part(op_id: int, start: datetime, hours: float, machine_id: int | None
         op.status = OperationStatus.planned
         db.commit()
         return {"placed": total, "remaining": 0}
-    op.duration_minutes = total - part  # resten kvar i backloggen
+    op.duration_minutes = total - part  # resten kvar oplanerad
     db.add(Operation(
         order_id=op.order_id, sequence=op.sequence, name=op.name,
+        moment_type_id=op.moment_type_id,
         machine_id=machine_id, duration_minutes=part,
         start_time=start, end_time=start + timedelta(minutes=part),
         status=OperationStatus.planned,
@@ -268,10 +296,22 @@ def schedule_manual(
     else:
         if start is None:
             raise HTTPException(status_code=422, detail="start krävs")
-        if machine_id is not None and op.machine_type_id is not None:
-            machine = db.get(Machine, machine_id)
-            if machine and machine.machine_type_id != op.machine_type_id:
-                raise HTTPException(status_code=422, detail="Momentet kräver en annan maskintyp")
+        _assert_machine_supports(db, machine_id, op)
+        # kedjelåst order: flytta orderns övriga faser lika mycket i tiden
+        order = db.get(ProductionOrder, op.order_id)
+        if order is not None and order.chain_locked and op.start_time is not None:
+            delta = start - op.start_time
+            if delta:
+                others = db.scalars(
+                    select(Operation).where(
+                        Operation.order_id == op.order_id,
+                        Operation.id != op.id,
+                        Operation.start_time.is_not(None),
+                    )
+                ).all()
+                for other in others:
+                    other.start_time = other.start_time + delta
+                    other.end_time = other.start_time + timedelta(minutes=other.duration_minutes)
         op.start_time = start
         op.end_time = start + timedelta(minutes=op.duration_minutes)
         if machine_id is not None:

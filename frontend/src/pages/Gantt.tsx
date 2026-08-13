@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 
 type Op = {
-  id: number; order_id: number; name: string; sequence: number;
+  id: number; order_id: number; name: string; sequence: number; moment_type_id: number | null;
   machine_id: number | null; start_time: string | null; end_time: string | null;
   status: string; duration_minutes: number; overtime: boolean;
 };
@@ -17,7 +17,7 @@ const BAR_TOP = 11;
 const BAR_CENTER = 24;
 const SNAP_MIN = 15;
 const SNAP_MS = SNAP_MIN * 60000;
-const DAYS = 28;
+const DAYS = 182; // ~26 veckors planeringshorisont
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const parseTime = (s?: string) => { if (!s) return { h: 7, m: 0 }; const [h, m] = s.split(":").map(Number); return { h: h || 0, m: m || 0 }; };
@@ -55,6 +55,7 @@ export default function Gantt() {
   const qc = useQueryClient();
   const { data: ops = [] } = useQuery<Op[]>({ queryKey: ["operations"], queryFn: api.operations });
   const { data: machines = [] } = useQuery<any[]>({ queryKey: ["machines"], queryFn: api.machines });
+  const { data: types = [] } = useQuery<any[]>({ queryKey: ["momentTypes"], queryFn: api.momentTypes });
   const { data: orders = [] } = useQuery<any[]>({ queryKey: ["orders"], queryFn: api.orders });
 
   const [pxph, setPxph] = useState(26);
@@ -63,6 +64,7 @@ export default function Gantt() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [warn, setWarn] = useState("");
   const [popState, setPop] = useState<{ opId: number; x: number; y: number } | null>(null);
+  const [viewport, setViewport] = useState({ x: 0, w: 0 });
   const warnTimer = useRef<number | null>(null);
   const flashWarn = (m: string) => { setWarn(m); if (warnTimer.current) clearTimeout(warnTimer.current); warnTimer.current = window.setTimeout(() => setWarn(""), 2600); };
 
@@ -72,9 +74,11 @@ export default function Gantt() {
   const setStatus = useMutation({ mutationFn: (v: { id: number; s: string }) => api.setPhaseStatus(v.id, v.s), onSuccess: invalidate });
   const resize = useMutation({ mutationFn: (v: { id: number; hours: number; start?: string }) => api.resizePhase(v.id, v.hours, v.start), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
   const placePart = useMutation({ mutationFn: (v: { id: number; start: string; machine: number | null; hours: number }) => api.placePart(v.id, v.start, v.machine, v.hours), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
+  const chainLock = useMutation({ mutationFn: (v: { orderId: number; value: boolean }) => api.setChainLock(v.orderId, v.value), onSuccess: invalidate });
 
   const dueByOrder = useMemo(() => { const m: Record<number, number> = {}; for (const o of orders) m[o.id] = new Date(o.due_date).getTime(); return m; }, [orders]);
   const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
+  const chainOrders = useMemo(() => new Set(orders.filter((o) => o.chain_locked).map((o) => o.id)), [orders]);
   // fasnummer per order rankat på sekvens → delar av samma fas (samma sequence) delar nummer
   const posById = useMemo(() => {
     const byOrder: Record<number, Op[]> = {}; for (const o of ops) (byOrder[o.order_id] ??= []).push(o);
@@ -131,7 +135,17 @@ export default function Gantt() {
     return min + di * DAY + h * HOUR;
   };
 
-  const rows = useMemo(() => [...machines].sort((a, b) => String(a.name).localeCompare(String(b.name), "sv")).map((m) => ({ id: m.id as number, name: m.name as string })), [machines]);
+  // maskiner grupperade så att de med samma moment ligger efter varandra
+  const rows = useMemo(() => {
+    const nameOf = (id: number) => types.find((t) => t.id === id)?.name ?? "";
+    return [...machines]
+      .map((m) => {
+        const ids: number[] = m.moment_type_ids ?? [];
+        const names = ids.map(nameOf).filter(Boolean).sort((a, b) => a.localeCompare(b, "sv"));
+        return { id: m.id as number, name: m.name as string, momentIds: ids, groupLabel: names.join(" · "), groupKey: names.join("|") };
+      })
+      .sort((a, b) => a.groupKey.localeCompare(b.groupKey, "sv") || a.name.localeCompare(b.name, "sv"));
+  }, [machines, types]);
   const rowIndexOf = (mid: number | null) => rows.findIndex((r) => r.id === mid);
   const shiftOf = (mid: number | null): Shift => { const m = machines.find((x) => x.id === mid); const s = parseTime(m?.shift_start), e = parseTime(m?.shift_end); return { sh: s.h, sm: s.m, eh: e.h, em: e.m }; };
 
@@ -139,7 +153,14 @@ export default function Gantt() {
   for (const o of scheduled) (opsByMachine[String(o.machine_id)] ??= []).push(o);
 
   const dayList = useMemo(() => Array.from({ length: days }, (_, i) => { const d = new Date(min + i * DAY); const monday = (d.getDay() + 6) % 7 === 0; return { i, weekend: d.getDay() === 0 || d.getDay() === 6, date: d, week: isoWeek(d), monday, dx: cols.arr[i] * dayWidth }; }), [min, days, cols, dayWidth]);
-  const visibleDays = useMemo(() => dayList.filter((d) => !(hideWeekends && d.weekend)), [dayList, hideWeekends]);
+  const allDays = useMemo(() => dayList.filter((d) => !(hideWeekends && d.weekend)), [dayList, hideWeekends]);
+  // rendera bara dagarna kring synligt område — håller DOM lätt vid lång horisont
+  const visibleDays = useMemo(() => {
+    if (viewport.w <= 0) return allDays.slice(0, 30);
+    const from = viewport.x - LABEL_W - dayWidth * 2;
+    const to = viewport.x - LABEL_W + viewport.w + dayWidth * 2;
+    return allDays.filter((d) => d.dx + dayWidth >= from && d.dx <= to);
+  }, [allDays, viewport, dayWidth]);
   const hourList = useMemo(() => { const hs: number[] = []; for (let h = Math.ceil(winStart); h < winEnd; h++) hs.push(h); return hs; }, [winStart, winEnd]);
 
   // en placerad fas = ett sammanhängande block (elapsed tid). Övertid räknas automatiskt.
@@ -225,14 +246,36 @@ export default function Gantt() {
   const anchorRef = useRef<number | null>(null);
   const scrolled = useRef(false);
   const captureAnchor = () => { const sc = scrollRef.current; if (sc) anchorRef.current = msFromX(sc.scrollLeft + sc.clientWidth / 2 - LABEL_W); };
+  const syncViewport = () => { const sc = scrollRef.current; if (sc) setViewport({ x: sc.scrollLeft, w: sc.clientWidth }); };
+  useEffect(() => {
+    const sc = scrollRef.current; if (!sc) return;
+    let raf = 0;
+    const onScroll = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(syncViewport); };
+    sc.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    syncViewport();
+    return () => { sc.removeEventListener("scroll", onScroll); window.removeEventListener("resize", onScroll); cancelAnimationFrame(raf); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     const sc = scrollRef.current; if (!sc) return;
     if (anchorRef.current != null) { sc.scrollLeft = LABEL_W + xOf(anchorRef.current) - sc.clientWidth / 2; anchorRef.current = null; }
     else if (!scrolled.current && showNow) { sc.scrollLeft = Math.max(0, xOf(now) - 140); scrolled.current = true; }
+    syncViewport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pxph, view, rows.length]);
+  }, [pxph, view, hideWeekends, rows.length]);
 
-  function beginDrag(e: React.MouseEvent, opt: { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number; overtime: boolean } | { kind: "new"; opId: number; durMin: number }) {
+  const scrollDays = (n: number) => { const sc = scrollRef.current; if (sc) sc.scrollLeft += n * dayWidth; };
+  const goToday = () => { const sc = scrollRef.current; if (sc) sc.scrollLeft = Math.max(0, xOf(now) - 140); };
+
+  // kan maskinen utföra fasens moment?
+  const machineOk = (machineId: number | null, momentTypeId: number | null) => {
+    if (momentTypeId == null) return true;
+    const r = rows.find((x) => x.id === machineId);
+    return !!r && r.momentIds.includes(momentTypeId);
+  };
+
+  function beginDrag(e: React.MouseEvent, opt: { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number; overtime: boolean; momentTypeId: number | null } | { kind: "new"; opId: number; durMin: number; momentTypeId: number | null }) {
     e.preventDefault();
     setPop(null);
     const startX = e.clientX, startY = e.clientY;
@@ -255,21 +298,23 @@ export default function Gantt() {
       snap = compute(ev.clientX, ev.clientY);
       const seg0 = { start: snap.ms, end: snap.ms + opt.durMin * 60000 };
       const left = LABEL_W + xOf(seg0.start), w = Math.max(xOf(seg0.end) - xOf(seg0.start), 10);
+      const ok = machineOk(snap.machine, opt.momentTypeId);
       if (el) el.classList.add("dragging");
-      if (preview) { preview.style.display = "block"; preview.style.left = left + "px"; preview.style.top = HEAD_H + snap.row * ROW_H + BAR_TOP + "px"; preview.style.width = w + "px"; }
+      if (preview) { preview.className = "g-preview" + (ok ? "" : " invalid"); preview.style.display = "block"; preview.style.left = left + "px"; preview.style.top = HEAD_H + snap.row * ROW_H + BAR_TOP + "px"; preview.style.width = w + "px"; }
       if (el) { const origLeft = LABEL_W + xOf(opt.kind === "move" ? opt.origMs : min); el.style.transform = `translate(${left - origLeft}px, ${(snap.row - origRow) * ROW_H}px)`; }
     };
     const onUp = (ev: MouseEvent) => {
       window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
       document.body.classList.remove("dragging-active");
       if (el) { el.classList.remove("dragging"); el.style.transform = ""; }
-      if (preview) preview.style.display = "none";
+      if (preview) { preview.style.display = "none"; preview.className = "g-preview"; }
       if (!moved) {
         if (opt.kind === "move") setPop({ opId: opt.opId, x: ev.clientX, y: ev.clientY });
         else setSelectedId((prev) => (prev === opt.opId ? null : opt.opId)); // klick på chip = markera för att måla in timmar
         return;
       }
       if (!snap || snap.machine == null) return;
+      if (!machineOk(snap.machine, opt.momentTypeId)) { flashWarn("Maskinen kan inte utföra det momentet"); return; }
       if (opt.kind === "move" && snap.machine === opt.origMachine && Math.abs(snap.ms - opt.origMs) < SNAP_MS) return;
       schedule.mutate({ id: opt.opId, start: msToLocalIso(snap.ms), machine: snap.machine });
     };
@@ -317,9 +362,11 @@ export default function Gantt() {
   }
 
   // måla in timmar: en markerad fas + dra upp ett spann på en maskinrad
-  function startPaint(e: React.MouseEvent, row: { id: number }) {
+  function startPaint(e: React.MouseEvent, row: { id: number; momentIds: number[] }) {
     if (selectedId == null) return;
     if (!(e.target as HTMLElement).classList.contains("g-row")) return; // bara på tom radyta
+    const sel = ops.find((o) => o.id === selectedId);
+    if (sel && !machineOk(row.id, sel.moment_type_id)) { flashWarn("Maskinen kan inte utföra det momentet"); return; }
     e.preventDefault();
     const ri = rowIndexOf(row.id); const preview = previewRef.current;
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -350,6 +397,9 @@ export default function Gantt() {
       <div className="page-head">
         <h1>Produktionsplanering</h1>
         <div className="gantt-toolbar">
+          <button className="iconbtn" title="En vecka bakåt" onClick={() => scrollDays(-7)}>‹</button>
+          <button className="btn secondary" onClick={goToday}>Idag</button>
+          <button className="iconbtn" title="En vecka framåt" onClick={() => scrollDays(7)}>›</button>
           <div className="seg-toggle">
             <button className={view === "compact" ? "active" : ""} onClick={() => { captureAnchor(); setView("compact"); }}>Arbetstid</button>
             <button className={view === "day" ? "active" : ""} onClick={() => { captureAnchor(); setView("day"); }}>Hela dygn</button>
@@ -374,7 +424,7 @@ export default function Gantt() {
             ) : (
               <div className="backlog-chips">
                 {backlog.map((o) => (
-                  <div key={o.id} className={"chip" + (selectedId === o.id ? " selected" : "")} onMouseDown={(e) => beginDrag(e, { kind: "new", opId: o.id, durMin: o.duration_minutes })}>
+                  <div key={o.id} className={"chip" + (selectedId === o.id ? " selected" : "")} onMouseDown={(e) => beginDrag(e, { kind: "new", opId: o.id, durMin: o.duration_minutes, momentTypeId: o.moment_type_id })}>
                     <span className="seq">{posById[o.id]}</span>
                     <strong>{orderNo(o.order_id)}</strong> · {o.name}
                     <span className="dur">{fmtDur(o.duration_minutes)}</span>
@@ -419,14 +469,25 @@ export default function Gantt() {
               {rows.map((row, ri) => {
                 const mc = machines.find((m) => m.id === row.id);
                 const shiftS = parseTime(mc?.shift_start), shiftE = parseTime(mc?.shift_end);
-                const sh = shiftOf(row.id);
                 const aS = clamp(shiftS.h + shiftS.m / 60, winStart, winEnd), aE = clamp(shiftE.h + shiftE.m / 60, winStart, winEnd);
+                // lunchen delar arbetstidsblocket i två delar
+                const lu = mc?.lunch_start && mc?.lunch_end ? { a: parseTime(mc.lunch_start), b: parseTime(mc.lunch_end) } : null;
+                const lS = lu ? clamp(lu.a.h + lu.a.m / 60, aS, aE) : 0, lE = lu ? clamp(lu.b.h + lu.b.m / 60, aS, aE) : 0;
+                const bands = lu && lE > lS ? [[aS, lS], [lE, aE]] : [[aS, aE]];
+                const groupStart = ri === 0 || rows[ri - 1].groupKey !== row.groupKey;
                 return (
-                  <div key={row.id} className={"g-row" + (selectedId != null ? " painting" : "")} style={{ top: HEAD_H + ri * ROW_H }} onMouseDown={(e) => startPaint(e, row)}>
-                    <div className="g-rowlabel"><div className="g-rowname">{row.name}</div></div>
-                    {mc && aE > aS && visibleDays.filter((d) => !d.weekend).map((d) => (
-                      <div key={"av" + d.i} className="g-avail" style={{ left: LABEL_W + d.dx + (aS - winStart) * pxph, width: (aE - aS) * pxph }} />
-                    ))}
+                  <div key={row.id} className={"g-row" + (selectedId != null ? " painting" : "") + (groupStart ? " group-start" : "")} style={{ top: HEAD_H + ri * ROW_H }} onMouseDown={(e) => startPaint(e, row)}>
+                    <div className="g-rowlabel">
+                      <div>
+                        <div className="g-rowname">{row.name}</div>
+                        <div className="g-rowtype">{row.groupLabel || "Inga moment"}</div>
+                      </div>
+                    </div>
+                    {mc && visibleDays.filter((d) => !d.weekend).flatMap((d) =>
+                      bands.filter(([x, y]) => y > x).map(([x, y], bi) => (
+                        <div key={`av${d.i}-${bi}`} className="g-avail" style={{ left: LABEL_W + d.dx + (x - winStart) * pxph, width: (y - x) * pxph }} />
+                      ))
+                    )}
                     {showNow && <div className="g-now" style={{ left: LABEL_W + xOf(now), height: ROW_H }} />}
                     {(opsByMachine[String(row.id)] ?? []).map((o) => {
                       const s = new Date(o.start_time!).getTime();
@@ -438,12 +499,12 @@ export default function Gantt() {
                         <div key={o.id} className={"g-bar " + barClass(o)}
                           style={{ left: LABEL_W + barLeft, width: Math.max(xOf(e) - barLeft, 10) }}
                           title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt${otMin > 0 ? `\n⚠ ${fmtDur(otMin)} övertid (utanför arbetstid)` : ""}\nKlicka för status · dra för att flytta`}
-                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes, overtime: o.overtime })}>
+                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes, overtime: o.overtime, momentTypeId: o.moment_type_id })}>
                           {ots.map((iv, i) => (
                             <div key={i} className="g-ot" style={{ left: xOf(iv.start) - barLeft, width: Math.max(xOf(iv.end) - xOf(iv.start), 2) }} />
                           ))}
                           <span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />
-                          <span className="bar-label">{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</span>
+                          <span className="bar-label">{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}{chainOrders.has(o.order_id) && <span className="ot-badge" title="Länkade faser — flyttas tillsammans">🔗</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</span>
                           <span className="resize-handle" title="Dra för att korta fasen — resten blir oplanerad" onMouseDown={(ev) => beginResize(ev, o)} />
                         </div>
                       );
@@ -477,6 +538,7 @@ export default function Gantt() {
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "delayed" }); setPop(null); }}><span className="dot" style={{ background: "#ce0e2d" }} />Markera försenad</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "running" }); setPop(null); }}><span className="dot" style={{ background: "#2563eb" }} />Markera pågår</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "planned" }); setPop(null); }}><span className="dot" style={{ background: "#94a3b8" }} />Återställ status</button>
+              {o && <button onClick={() => { chainLock.mutate({ orderId: o.order_id, value: !chainOrders.has(o.order_id) }); setPop(null); }}><span className="dot" style={{ background: "#7c3aed" }} />{chainOrders.has(o.order_id) ? "Lås upp orderns faser" : "Länka orderns faser"}</button>}
               <button onClick={() => { unschedule.mutate(popState.opId); setPop(null); }}><span className="dot" style={{ background: "#111418" }} />Gör oplanerad</button>
             </div>
           </>

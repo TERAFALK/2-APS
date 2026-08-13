@@ -17,12 +17,16 @@ def run() -> None:
             print("Demodata finns redan – hoppar över.")
             return
 
+        moments = {n: MomentType(name=n) for n in ["Fräsning", "Svarvning", "Montering", "Kapning", "Kontroll"]}
+        db.add_all(moments.values()); db.flush()
+
         machines = [
-            Machine(name="CNC-1"), Machine(name="CNC-2"),
-            Machine(name="Svarv-1"), Machine(name="Montering-1"),
+            Machine(name="CNC-1", moment_types=[moments["Fräsning"]]),
+            Machine(name="CNC-2", moment_types=[moments["Fräsning"]]),
+            Machine(name="Svarv-1", moment_types=[moments["Svarvning"], moments["Kapning"]]),
+            Machine(name="Montering-1", moment_types=[moments["Montering"], moments["Kontroll"]]),
         ]
         db.add_all(machines)
-        db.add_all([MomentType(name=n) for n in ["Fräsning", "Svarvning", "Montering", "Kapning", "Kontroll"]])
         kund = Customer(name="Volvo CE", contact_email="inkop@volvo.example")
         db.add(kund); db.flush()
 
@@ -33,11 +37,11 @@ def run() -> None:
 
         db.add_all([
             Operation(order_id=order.id, sequence=10, name="Kapning",
-                      machine_id=machines[2].id, duration_minutes=4 * 60, status=OperationStatus.planned),
+                      moment_type_id=moments["Kapning"].id, duration_minutes=4 * 60, status=OperationStatus.planned),
             Operation(order_id=order.id, sequence=20, name="Fräsning",
-                      machine_id=machines[0].id, duration_minutes=40 * 60, status=OperationStatus.planned),
+                      moment_type_id=moments["Fräsning"].id, duration_minutes=40 * 60, status=OperationStatus.planned),
             Operation(order_id=order.id, sequence=30, name="Montering",
-                      machine_id=machines[3].id, duration_minutes=8 * 60, status=OperationStatus.planned),
+                      moment_type_id=moments["Montering"].id, duration_minutes=8 * 60, status=OperationStatus.planned),
         ])
         db.commit()
         print("Demodata skapad. Öppna Planering och dra ut faserna.")

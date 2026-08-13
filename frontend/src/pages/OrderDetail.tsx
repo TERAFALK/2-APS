@@ -21,10 +21,15 @@ export default function OrderDetail() {
   const custName = order ? (customers.find((c) => c.id === order.customer_id)?.name ?? "–") : "";
   const machineName = (mid: number | null) => machines.find((m) => m.id === mid)?.name ?? "—";
 
-  const empty = { name: "", hours: 8 };
+  const empty = { moment_type_id: 0, hours: 8 };
   const [form, setForm] = useState(empty);
+  const momentName = (id: number) => moments.find((m) => m.id === id)?.name ?? "";
 
-  const add = useMutation({ mutationFn: () => api.addPhase(oid, { name: form.name, hours: Number(form.hours) }), onSuccess: () => { inval(); setForm(empty); }, onError: onErr });
+  const add = useMutation({
+    mutationFn: () => api.addPhase(oid, { name: momentName(form.moment_type_id), moment_type_id: form.moment_type_id, hours: Number(form.hours) }),
+    onSuccess: () => { inval(); setForm(empty); }, onError: onErr,
+  });
+  const chainLock = useMutation({ mutationFn: (v: boolean) => api.setChainLock(oid, v), onSuccess: inval, onError: onErr });
   const del = useMutation({ mutationFn: (pid: number) => api.deletePhase(pid), onSuccess: inval, onError: onErr });
   const setStatus = useMutation({ mutationFn: (v: { id: number; s: string }) => api.setPhaseStatus(v.id, v.s), onSuccess: inval, onError: onErr });
   const delOrder = useMutation({ mutationFn: () => api.deleteOrder(oid), onSuccess: () => { inval(); nav("/orders"); }, onError: onErr });
@@ -51,7 +56,13 @@ export default function OrderDetail() {
       </div>
 
       <div className="section">
-        <h2>Faser</h2>
+        <div className="card-head">
+          <h2>Faser</h2>
+          <label className="check" style={{ margin: 0 }}>
+            <input type="checkbox" checked={!!order.chain_locked} onChange={(e) => chainLock.mutate(e.target.checked)} />
+            🔗 Länka faser — flyttas en fas i schemat följer orderns övriga faser med
+          </label>
+        </div>
         {phases.length > 0 && (
           <div className="table-wrap" style={{ marginBottom: 12 }}>
             <table>
@@ -79,13 +90,13 @@ export default function OrderDetail() {
         <div className="card">
           <div className="form-row">
             <label className="field">Moment
-              <select value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}>
-                <option value="">Välj…</option>
-                {moments.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+              <select value={form.moment_type_id} onChange={(e) => setForm({ ...form, moment_type_id: Number(e.target.value) })}>
+                <option value={0}>Välj…</option>
+                {moments.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
             </label>
             <label className="field">Timmar<input type="number" min={0.5} step={0.5} value={form.hours} style={{ width: 100 }} onChange={(e) => setForm({ ...form, hours: Number(e.target.value) })} /></label>
-            <button className="btn secondary" disabled={!form.name || add.isPending} onClick={() => add.mutate()}>＋ Lägg till fas</button>
+            <button className="btn secondary" disabled={!form.moment_type_id || add.isPending} onClick={() => add.mutate()}>＋ Lägg till fas</button>
           </div>
           {moments.length === 0 && <div className="subtle" style={{ marginTop: 8 }}>Inga momenttyper ännu — lägg upp dem under Inställningar.</div>}
           <div className="subtle" style={{ marginTop: 8 }}>Maskin väljs när du drar ut fasen i Planering.</div>

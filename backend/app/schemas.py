@@ -91,14 +91,23 @@ class MomentTypeOut(ORMBase, MomentTypeIn):
 
 class MachineIn(BaseModel):
     name: str
-    machine_type_id: int | None = None
     shift_start: time = time(7, 0)
     shift_end: time = time(16, 0)
+    lunch_start: time | None = None
+    lunch_end: time | None = None
     available: bool = True
+    moment_type_ids: list[int] = []
 
 
-class MachineOut(ORMBase, MachineIn):
+class MachineOut(ORMBase):
     id: int
+    name: str
+    shift_start: time
+    shift_end: time
+    lunch_start: time | None = None
+    lunch_end: time | None = None
+    available: bool = True
+    moment_type_ids: list[int] = []
 
 
 # --- orders / plan ---
@@ -116,10 +125,12 @@ class OrderOut(ORMBase):
     priority: OrderPriority
     due_date: datetime
     status: OrderStatus
+    chain_locked: bool = False
 
 
 class PhaseIn(BaseModel):
     name: str
+    moment_type_id: int | None = None
     machine_id: int | None = None
     hours: float = 1.0
 
@@ -129,6 +140,7 @@ class OperationOut(ORMBase):
     order_id: int
     name: str
     sequence: int
+    moment_type_id: int | None = None
     machine_type_id: int | None
     machine_id: int | None
     start_time: datetime | None
