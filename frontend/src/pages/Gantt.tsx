@@ -5,7 +5,7 @@ import { api } from "../api";
 type Op = {
   id: number; order_id: number; name: string; sequence: number; moment_type_id: number | null;
   machine_id: number | null; start_time: string | null; end_time: string | null;
-  status: string; duration_minutes: number; overtime: boolean;
+  status: string; duration_minutes: number; overtime: boolean; chain_locked: boolean;
 };
 
 const LABEL_W = 150;
@@ -74,11 +74,23 @@ export default function Gantt() {
   const setStatus = useMutation({ mutationFn: (v: { id: number; s: string }) => api.setPhaseStatus(v.id, v.s), onSuccess: invalidate });
   const resize = useMutation({ mutationFn: (v: { id: number; hours: number; start?: string }) => api.resizePhase(v.id, v.hours, v.start), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
   const placePart = useMutation({ mutationFn: (v: { id: number; start: string; machine: number | null; hours: number }) => api.placePart(v.id, v.start, v.machine, v.hours), onSuccess: invalidate, onError: (e: any) => flashWarn(e.message) });
-  const chainLock = useMutation({ mutationFn: (v: { orderId: number; value: boolean }) => api.setChainLock(v.orderId, v.value), onSuccess: invalidate });
+  const chainLock = useMutation({ mutationFn: (v: { id: number; value: boolean }) => api.setPhaseChainLock(v.id, v.value), onSuccess: invalidate });
 
   const dueByOrder = useMemo(() => { const m: Record<number, number> = {}; for (const o of orders) m[o.id] = new Date(o.due_date).getTime(); return m; }, [orders]);
   const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
-  const chainOrders = useMemo(() => new Set(orders.filter((o) => o.chain_locked).map((o) => o.id)), [orders]);
+  // en fas "följer" om det finns en tidigare låst fas i samma order
+  const followsLocked = useMemo(() => {
+    const s = new Set<number>();
+    const byOrder: Record<number, Op[]> = {};
+    for (const o of ops) (byOrder[o.order_id] ??= []).push(o);
+    for (const list of Object.values(byOrder)) {
+      const lockedSeqs = list.filter((o) => o.chain_locked).map((o) => o.sequence);
+      if (!lockedSeqs.length) continue;
+      const minLocked = Math.min(...lockedSeqs);
+      for (const o of list) if (o.sequence > minLocked) s.add(o.id);
+    }
+    return s;
+  }, [ops]);
   // fasnummer per order rankat på sekvens → delar av samma fas (samma sequence) delar nummer
   const posById = useMemo(() => {
     const byOrder: Record<number, Op[]> = {}; for (const o of ops) (byOrder[o.order_id] ??= []).push(o);
@@ -504,7 +516,8 @@ export default function Gantt() {
                             <div key={i} className="g-ot" style={{ left: xOf(iv.start) - barLeft, width: Math.max(xOf(iv.end) - xOf(iv.start), 2) }} />
                           ))}
                           <span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />
-                          <span className="bar-label">{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}{chainOrders.has(o.order_id) && <span className="ot-badge" title="Länkade faser — flyttas tillsammans">🔗</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</span>
+                          <span className="bar-label">{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}{o.chain_locked && <span className="chain-badge" title="Låst — efterföljande faser flyttas med">🔗</span>}
+                          {!o.chain_locked && followsLocked.has(o.id) && <span className="chain-badge follow" title="Följer med en tidigare låst fas">⇢</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</span>
                           <span className="resize-handle" title="Dra för att korta fasen — resten blir oplanerad" onMouseDown={(ev) => beginResize(ev, o)} />
                         </div>
                       );
@@ -538,7 +551,7 @@ export default function Gantt() {
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "delayed" }); setPop(null); }}><span className="dot" style={{ background: "#ce0e2d" }} />Markera försenad</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "running" }); setPop(null); }}><span className="dot" style={{ background: "#2563eb" }} />Markera pågår</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "planned" }); setPop(null); }}><span className="dot" style={{ background: "#94a3b8" }} />Återställ status</button>
-              {o && <button onClick={() => { chainLock.mutate({ orderId: o.order_id, value: !chainOrders.has(o.order_id) }); setPop(null); }}><span className="dot" style={{ background: "#7c3aed" }} />{chainOrders.has(o.order_id) ? "Lås upp orderns faser" : "Länka orderns faser"}</button>}
+              {o && <button onClick={() => { chainLock.mutate({ id: o.id, value: !o.chain_locked }); setPop(null); }}><span className="dot" style={{ background: "#7c3aed" }} />{o.chain_locked ? "Lås upp efterföljande faser" : "Lås efterföljande faser"}</button>}
               <button onClick={() => { unschedule.mutate(popState.opId); setPop(null); }}><span className="dot" style={{ background: "#111418" }} />Gör oplanerad</button>
             </div>
           </>

@@ -53,7 +53,7 @@ export default function Customers() {
             <tbody>
               {shown.map((cu) => (
                 <tr key={cu.id} style={{ cursor: "pointer" }} onClick={() => nav(`/customers/${cu.id}`)}>
-                  <td style={{ fontWeight: 600 }}>{cu.name}</td>
+                  <td style={{ fontWeight: 550 }}>{cu.name}</td>
                   <td>{cu.customer_no || "–"}</td>
                   <td>{cu.org_no || "–"}</td>
                   <td>{cu.contact_email}{cu.contact_phone ? ` · ${cu.contact_phone}` : ""}</td>

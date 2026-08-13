@@ -50,17 +50,6 @@ def create_order(payload: OrderIn, db: Session = Depends(get_db)):
     return order
 
 
-@router.patch("/orders/{order_id}/chain-lock", response_model=OrderOut, dependencies=[Depends(planner)])
-def set_chain_lock(order_id: int, value: bool, db: Session = Depends(get_db)):
-    """Länka orderns faser: när en fas flyttas i schemat följer övriga med lika mycket."""
-    order = db.get(ProductionOrder, order_id)
-    if not order:
-        raise HTTPException(status_code=404, detail="Order saknas")
-    order.chain_locked = value
-    db.commit(); db.refresh(order)
-    return order
-
-
 @router.delete("/orders/{order_id}", status_code=204, dependencies=[Depends(planner)])
 def delete_order(order_id: int, db: Session = Depends(get_db)):
     order = db.get(ProductionOrder, order_id)
@@ -190,6 +179,17 @@ def place_part(op_id: int, start: datetime, hours: float, machine_id: int | None
     return {"placed": part, "remaining": total - part}
 
 
+@router.patch("/operations/{op_id}/chain-lock", response_model=OperationOut, dependencies=[Depends(planner)])
+def set_phase_chain_lock(op_id: int, value: bool, db: Session = Depends(get_db)):
+    """Lås efterföljande faser till denna: flyttas den följer senare faser med lika mycket."""
+    op = db.get(Operation, op_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Fas saknas")
+    op.chain_locked = value
+    db.commit(); db.refresh(op)
+    return op
+
+
 @router.patch("/operations/{op_id}/overtime", response_model=OperationOut, dependencies=[Depends(planner)])
 def set_overtime(op_id: int, value: bool, db: Session = Depends(get_db)):
     """Tillåt att fasen körs utanför arbetstid (övertid) eller tvinga in den i arbetstid."""
@@ -297,21 +297,20 @@ def schedule_manual(
         if start is None:
             raise HTTPException(status_code=422, detail="start krävs")
         _assert_machine_supports(db, machine_id, op)
-        # kedjelåst order: flytta orderns övriga faser lika mycket i tiden
-        order = db.get(ProductionOrder, op.order_id)
-        if order is not None and order.chain_locked and op.start_time is not None:
+        # låst fas: EFTERFÖLJANDE faser i ordern flyttas lika mycket i tiden
+        if op.chain_locked and op.start_time is not None:
             delta = start - op.start_time
             if delta:
-                others = db.scalars(
+                followers = db.scalars(
                     select(Operation).where(
                         Operation.order_id == op.order_id,
-                        Operation.id != op.id,
+                        Operation.sequence > op.sequence,
                         Operation.start_time.is_not(None),
                     )
                 ).all()
-                for other in others:
-                    other.start_time = other.start_time + delta
-                    other.end_time = other.start_time + timedelta(minutes=other.duration_minutes)
+                for f in followers:
+                    f.start_time = f.start_time + delta
+                    f.end_time = f.start_time + timedelta(minutes=f.duration_minutes)
         op.start_time = start
         op.end_time = start + timedelta(minutes=op.duration_minutes)
         if machine_id is not None:

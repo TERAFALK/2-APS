@@ -55,7 +55,7 @@ export default function Orders() {
             <tbody>
               {shown.map((o) => (
                 <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => nav(`/orders/${o.id}`)}>
-                  <td style={{ fontWeight: 600 }}>{o.order_no}</td>
+                  <td style={{ fontWeight: 550 }}>{o.order_no}</td>
                   <td>{custName(o.customer_id)}</td>
                   <td><span className={"prio " + o.priority}>{prioLabel(o.priority)}</span></td>
                   <td>{new Date(o.due_date).toLocaleDateString("sv-SE")}</td>

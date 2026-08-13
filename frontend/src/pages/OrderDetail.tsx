@@ -29,7 +29,7 @@ export default function OrderDetail() {
     mutationFn: () => api.addPhase(oid, { name: momentName(form.moment_type_id), moment_type_id: form.moment_type_id, hours: Number(form.hours) }),
     onSuccess: () => { inval(); setForm(empty); }, onError: onErr,
   });
-  const chainLock = useMutation({ mutationFn: (v: boolean) => api.setChainLock(oid, v), onSuccess: inval, onError: onErr });
+  const chainLock = useMutation({ mutationFn: (v: { id: number; value: boolean }) => api.setPhaseChainLock(v.id, v.value), onSuccess: inval, onError: onErr });
   const del = useMutation({ mutationFn: (pid: number) => api.deletePhase(pid), onSuccess: inval, onError: onErr });
   const setStatus = useMutation({ mutationFn: (v: { id: number; s: string }) => api.setPhaseStatus(v.id, v.s), onSuccess: inval, onError: onErr });
   const delOrder = useMutation({ mutationFn: () => api.deleteOrder(oid), onSuccess: () => { inval(); nav("/orders"); }, onError: onErr });
@@ -48,9 +48,9 @@ export default function OrderDetail() {
 
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
-          <div><div className="subtle">Kund</div><div style={{ fontWeight: 600 }}>{custName}</div></div>
+          <div><div className="subtle">Kund</div><div style={{ fontWeight: 550 }}>{custName}</div></div>
           <div><div className="subtle">Prioritet</div><span className={"prio " + order.priority}>{prioLabel(order.priority)}</span></div>
-          <div><div className="subtle">Leveransdatum</div><div style={{ fontWeight: 600 }}>{new Date(order.due_date).toLocaleDateString("sv-SE")}</div></div>
+          <div><div className="subtle">Leveransdatum</div><div style={{ fontWeight: 550 }}>{new Date(order.due_date).toLocaleDateString("sv-SE")}</div></div>
           <div><div className="subtle">Status</div><span className={"badge " + order.status}>{ORDER_STATUS[order.status] ?? order.status}</span></div>
         </div>
       </div>
@@ -58,10 +58,7 @@ export default function OrderDetail() {
       <div className="section">
         <div className="card-head">
           <h2>Faser</h2>
-          <label className="check" style={{ margin: 0 }}>
-            <input type="checkbox" checked={!!order.chain_locked} onChange={(e) => chainLock.mutate(e.target.checked)} />
-            🔗 Länka faser — flyttas en fas i schemat följer orderns övriga faser med
-          </label>
+          <span className="subtle">🔗 markerar att efterföljande faser flyttas med när fasen flyttas i schemat.</span>
         </div>
         {phases.length > 0 && (
           <div className="table-wrap" style={{ marginBottom: 12 }}>
@@ -70,8 +67,11 @@ export default function OrderDetail() {
               <tbody>
                 {phases.map((p, i) => (
                   <tr key={p.id}>
-                    <td><strong>{i + 1}</strong></td>
-                    <td>{p.name}</td>
+                    <td>{i + 1}</td>
+                    <td>
+                      {p.name}
+                      {p.chain_locked && <span className="chain-badge inline" title="Efterföljande faser flyttas med">🔗</span>}
+                    </td>
                     <td>{(p.duration_minutes / 60).toFixed(1).replace(".", ",").replace(",0", "")} h</td>
                     <td>{p.start_time ? machineName(p.machine_id) : "—"}</td>
                     <td><span className={"badge " + (p.start_time || p.status !== "planned" ? p.status : "draft")}>{p.start_time || p.status !== "planned" ? PHASE_STATUS[p.status] : "Ej planerad"}</span></td>
@@ -79,6 +79,7 @@ export default function OrderDetail() {
                       <button className="linkbtn" onClick={() => setStatus.mutate({ id: p.id, s: "done" })}>Klar</button>
                       <button className="linkbtn danger" onClick={() => setStatus.mutate({ id: p.id, s: "delayed" })}>Försenad</button>
                       <button className="linkbtn" onClick={() => setStatus.mutate({ id: p.id, s: "planned" })}>Återställ</button>
+                      <button className="linkbtn" onClick={() => chainLock.mutate({ id: p.id, value: !p.chain_locked })}>{p.chain_locked ? "Lås upp" : "Lås"}</button>
                       <button className="linkbtn danger" onClick={() => del.mutate(p.id)}>Ta bort</button>
                     </td>
                   </tr>

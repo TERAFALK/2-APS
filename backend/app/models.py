@@ -202,8 +202,6 @@ class ProductionOrder(Base):
     priority: Mapped[str] = mapped_column(String(16), default=OrderPriority.medium.value)
     due_date: Mapped[datetime] = mapped_column(DateTime)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.draft)
-    # när den är på flyttas orderns övriga faser med när en fas dras i schemat
-    chain_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     customer: Mapped[Customer | None] = relationship(back_populates="orders")
@@ -253,6 +251,8 @@ class Operation(Base):
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
     overtime: Mapped[bool] = mapped_column(Boolean, default=False)  # bokad utanför arbetstid
+    # när den är på följer orderns EFTERFÖLJANDE faser med när denna fas flyttas
+    chain_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[OperationStatus] = mapped_column(
         Enum(OperationStatus), default=OperationStatus.planned
     )

@@ -125,7 +125,6 @@ class OrderOut(ORMBase):
     priority: OrderPriority
     due_date: datetime
     status: OrderStatus
-    chain_locked: bool = False
 
 
 class PhaseIn(BaseModel):
@@ -147,6 +146,7 @@ class OperationOut(ORMBase):
     end_time: datetime | None
     duration_minutes: int
     overtime: bool = False
+    chain_locked: bool = False
     status: OperationStatus
 
 

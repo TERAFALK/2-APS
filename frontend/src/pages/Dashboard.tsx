@@ -50,7 +50,7 @@ export default function Dashboard() {
                       {m.machine} <span className="subtle">· {m.busy_h} h bokat, {m.free_h} h ledigt</span>
                       {m.overtime_h > 0 && <span className="ot-tag">⚠ {m.overtime_h} h övertid</span>}
                     </span>
-                    <span style={{ fontWeight: 700, color: hot ? "var(--red)" : undefined }}>{m.load_pct}%</span>
+                    <span style={{ fontWeight: 600, color: hot ? "var(--red)" : undefined }}>{m.load_pct}%</span>
                   </div>
                   <div className="util-track">
                     <div className="util-fill" style={{ width: `${Math.min(m.load_pct, 100)}%`, background: hot ? "var(--red)" : mid ? "var(--amber)" : "var(--green)" }} />

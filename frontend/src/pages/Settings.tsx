@@ -60,7 +60,7 @@ function Machines() {
             <tbody>
               {machines.map((m) => (
                 <tr key={m.id}>
-                  <td style={{ fontWeight: 600 }}>{m.name}</td>
+                  <td style={{ fontWeight: 550 }}>{m.name}</td>
                   <td>
                     {(m.moment_type_ids ?? []).length === 0
                       ? <span className="subtle">Inga moment</span>
@@ -153,7 +153,7 @@ function MomentTypes() {
             <tbody>
               {types.map((t) => (
                 <tr key={t.id}>
-                  <td style={{ fontWeight: 600 }}>{t.name}</td>
+                  <td style={{ fontWeight: 550 }}>{t.name}</td>
                   <td>
                     <button className="linkbtn" onClick={() => { setEditId(t.id); setName(t.name); setOpen(true); }}>Ändra</button>
                     <button className="linkbtn danger" onClick={() => confirm(`Ta bort ${t.name}?`) && del.mutate(t.id)}>Ta bort</button>

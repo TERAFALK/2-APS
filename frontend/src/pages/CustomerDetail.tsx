@@ -62,7 +62,7 @@ export default function CustomerDetail() {
               <tbody>
                 {custOrders.map((o) => (
                   <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => nav(`/orders/${o.id}`)}>
-                    <td style={{ fontWeight: 600 }}>{o.order_no}</td>
+                    <td style={{ fontWeight: 550 }}>{o.order_no}</td>
                     <td><span className={"prio " + o.priority}>{prioLabel(o.priority)}</span></td>
                     <td>{new Date(o.due_date).toLocaleDateString("sv-SE")}</td>
                     <td><span className={"badge " + o.status}>{ORDER_STATUS[o.status] ?? o.status}</span></td>
