@@ -78,16 +78,17 @@ export default function Gantt() {
 
   const dueByOrder = useMemo(() => { const m: Record<number, number> = {}; for (const o of orders) m[o.id] = new Date(o.due_date).getTime(); return m; }, [orders]);
   const orderNo = (id: number) => orders.find((o) => o.id === id)?.order_no ?? id;
-  // en fas "följer" om det finns en tidigare låst fas i samma order
+  // en fas "följer" om den ligger senare i tid än en låst fas i samma order
+  // (tidsbaserat → även andra delar av en delad fas fångas)
   const followsLocked = useMemo(() => {
     const s = new Set<number>();
     const byOrder: Record<number, Op[]> = {};
-    for (const o of ops) (byOrder[o.order_id] ??= []).push(o);
+    for (const o of ops) if (o.start_time) (byOrder[o.order_id] ??= []).push(o);
     for (const list of Object.values(byOrder)) {
-      const lockedSeqs = list.filter((o) => o.chain_locked).map((o) => o.sequence);
-      if (!lockedSeqs.length) continue;
-      const minLocked = Math.min(...lockedSeqs);
-      for (const o of list) if (o.sequence > minLocked) s.add(o.id);
+      const lockedTimes = list.filter((o) => o.chain_locked).map((o) => new Date(o.start_time!).getTime());
+      if (!lockedTimes.length) continue;
+      const anchor = Math.min(...lockedTimes);
+      for (const o of list) if (new Date(o.start_time!).getTime() > anchor) s.add(o.id);
     }
     return s;
   }, [ops]);
@@ -287,7 +288,7 @@ export default function Gantt() {
     return !!r && r.momentIds.includes(momentTypeId);
   };
 
-  function beginDrag(e: React.MouseEvent, opt: { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number; overtime: boolean; momentTypeId: number | null } | { kind: "new"; opId: number; durMin: number; momentTypeId: number | null }) {
+  function beginDrag(e: React.MouseEvent, opt: { kind: "move"; opId: number; origMs: number; origMachine: number | null; durMin: number; overtime: boolean; momentTypeId: number | null; follower?: boolean } | { kind: "new"; opId: number; durMin: number; momentTypeId: number | null }) {
     e.preventDefault();
     setPop(null);
     const startX = e.clientX, startY = e.clientY;
@@ -307,6 +308,7 @@ export default function Gantt() {
     };
     const onMove = (ev: MouseEvent) => {
       if (Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3) moved = true;
+      if (opt.kind === "move" && opt.follower) return; // följare får inte flyttas
       snap = compute(ev.clientX, ev.clientY);
       const seg0 = { start: snap.ms, end: snap.ms + opt.durMin * 60000 };
       const left = LABEL_W + xOf(seg0.start), w = Math.max(xOf(seg0.end) - xOf(seg0.start), 10);
@@ -325,6 +327,7 @@ export default function Gantt() {
         else setSelectedId((prev) => (prev === opt.opId ? null : opt.opId)); // klick på chip = markera för att måla in timmar
         return;
       }
+      if (opt.kind === "move" && opt.follower) { flashWarn("Fasen följer en låst fas — flytta den låsta fasen i stället"); return; }
       if (!snap || snap.machine == null) return;
       if (!machineOk(snap.machine, opt.momentTypeId)) { flashWarn("Maskinen kan inte utföra det momentet"); return; }
       if (opt.kind === "move" && snap.machine === opt.origMachine && Math.abs(snap.ms - opt.origMs) < SNAP_MS) return;
@@ -507,15 +510,16 @@ export default function Gantt() {
                       const otMin = overtimeMinutes(o);
                       const ots = otMin > 0 ? overtimeIntervals(o) : [];
                       const barLeft = xOf(s);
+                      const isFollower = followsLocked.has(o.id);
                       return (
-                        <div key={o.id} className={"g-bar " + barClass(o)}
+                        <div key={o.id} className={"g-bar " + barClass(o) + (isFollower ? " follower" : "")}
                           style={{ left: LABEL_W + barLeft, width: Math.max(xOf(e) - barLeft, 10) }}
-                          title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt${otMin > 0 ? `\n⚠ ${fmtDur(otMin)} övertid (utanför arbetstid)` : ""}\nKlicka för status · dra för att flytta`}
-                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes, overtime: o.overtime, momentTypeId: o.moment_type_id })}>
+                          title={`${orderNo(o.order_id)} · fas ${posById[o.id]}: ${o.name}\n${fmtDur(o.duration_minutes)} totalt${otMin > 0 ? `\n⚠ ${fmtDur(otMin)} övertid (utanför arbetstid)` : ""}\n${isFollower ? "Följer en låst fas — flytta den låsta fasen i stället" : "Klicka för status · dra för att flytta"}`}
+                          onMouseDown={(ev) => beginDrag(ev, { kind: "move", opId: o.id, origMs: s, origMachine: o.machine_id, durMin: o.duration_minutes, overtime: o.overtime, momentTypeId: o.moment_type_id, follower: isFollower })}>
                           {ots.map((iv, i) => (
                             <div key={i} className="g-ot" style={{ left: xOf(iv.start) - barLeft, width: Math.max(xOf(iv.end) - xOf(iv.start), 2) }} />
                           ))}
-                          <span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />
+                          {!isFollower && <span className="resize-handle left" title="Dra för att korta fasen från början" onMouseDown={(ev) => beginResizeStart(ev, o)} />}
                           <span className="bar-label">{otMin > 0 && <span className="ot-badge" title={`${fmtDur(otMin)} övertid`}>⚠</span>}{o.chain_locked && <span className="chain-badge" title="Låst — efterföljande faser flyttas med">🔗</span>}
                           {!o.chain_locked && followsLocked.has(o.id) && <span className="chain-badge follow" title="Följer med en tidigare låst fas">⇢</span>}<span className="seq light">{posById[o.id]}</span>{orderNo(o.order_id)} · {o.name}</span>
                           <span className="resize-handle" title="Dra för att korta fasen — resten blir oplanerad" onMouseDown={(ev) => beginResize(ev, o)} />
@@ -546,7 +550,10 @@ export default function Gantt() {
           <>
             <div style={{ position: "fixed", inset: 0, zIndex: 205 }} onMouseDown={() => setPop(null)} />
             <div className="popover" style={{ left: Math.min(popState.x, window.innerWidth - 210), top: Math.min(popState.y, window.innerHeight - 230) }}>
-              <div className="pop-title">{o ? `${orderNo(o.order_id)} · ${o.name}` : ""}</div>
+              <div className="pop-title">
+                {o ? `${orderNo(o.order_id)} · ${o.name}` : ""}
+                {o && followsLocked.has(o.id) && <div className="pop-note">⇢ Följer en låst fas — lås upp den för att flytta</div>}
+              </div>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "done" }); setPop(null); }}><span className="dot" style={{ background: "#16a34a" }} />Markera klar</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "delayed" }); setPop(null); }}><span className="dot" style={{ background: "#ce0e2d" }} />Markera försenad</button>
               <button onClick={() => { setStatus.mutate({ id: popState.opId, s: "running" }); setPop(null); }}><span className="dot" style={{ background: "#2563eb" }} />Markera pågår</button>

@@ -303,6 +303,9 @@ tbody tr[style*="cursor"]:hover { background: #f5f8ff; }
 .chain-badge { margin-right: 4px; font-size: 10px; opacity: 0.95; }
 .chain-badge.follow { opacity: 0.6; }
 .chain-badge.inline { margin-left: 6px; opacity: 0.7; font-size: 11px; }
+.g-bar.follower { cursor: default; }
+.g-bar.follower::after { content: ""; position: absolute; inset: 0; border-radius: 5px; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.35); pointer-events: none; }
+.pop-note { color: var(--muted-light); font-weight: 400; font-size: 11.5px; margin-top: 3px; }
 .swatch.ot { background: repeating-linear-gradient(45deg, #d97706 0 4px, #fff 4px 8px); border: 1px solid #d97706; }
 .btn.secondary.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 .g-bar.dragging { cursor: grabbing; opacity: 0.9; z-index: 30; box-shadow: var(--shadow-lg); }

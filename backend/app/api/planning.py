@@ -110,6 +110,17 @@ def resize_phase(op_id: int, hours: float, start: datetime | None = None, db: Se
     op = db.get(Operation, op_id)
     if not op:
         raise HTTPException(status_code=404, detail="Fas saknas")
+    if start is not None and op.start_time is not None:
+        anchor = db.scalar(
+            select(Operation).where(
+                Operation.order_id == op.order_id,
+                Operation.chain_locked.is_(True),
+                Operation.start_time.is_not(None),
+                Operation.start_time < op.start_time,
+            ).limit(1)
+        )
+        if anchor is not None:
+            raise HTTPException(status_code=422, detail="Fasen följer en låst fas och kan inte flyttas")
     old_min = op.duration_minutes
 
     # fasens oplanerade rest (samma order/sekvens/moment) — enda källan till mer tid
@@ -181,11 +192,16 @@ def place_part(op_id: int, start: datetime, hours: float, machine_id: int | None
 
 @router.patch("/operations/{op_id}/chain-lock", response_model=OperationOut, dependencies=[Depends(planner)])
 def set_phase_chain_lock(op_id: int, value: bool, db: Session = Depends(get_db)):
-    """Lås efterföljande faser till denna: flyttas den följer senare faser med lika mycket."""
+    """Lås efterföljande faser till denna: flyttas den följer allt som ligger senare med.
+    Låset sätts på fasens ALLA delar (samma sekvens) så delade faser hanteras rätt."""
     op = db.get(Operation, op_id)
     if not op:
         raise HTTPException(status_code=404, detail="Fas saknas")
-    op.chain_locked = value
+    parts = db.scalars(
+        select(Operation).where(Operation.order_id == op.order_id, Operation.sequence == op.sequence)
+    ).all()
+    for p in parts:
+        p.chain_locked = value
     db.commit(); db.refresh(op)
     return op
 
@@ -297,20 +313,37 @@ def schedule_manual(
         if start is None:
             raise HTTPException(status_code=422, detail="start krävs")
         _assert_machine_supports(db, machine_id, op)
-        # låst fas: EFTERFÖLJANDE faser i ordern flyttas lika mycket i tiden
-        if op.chain_locked and op.start_time is not None:
-            delta = start - op.start_time
-            if delta:
-                followers = db.scalars(
-                    select(Operation).where(
-                        Operation.order_id == op.order_id,
-                        Operation.sequence > op.sequence,
-                        Operation.start_time.is_not(None),
-                    )
-                ).all()
-                for f in followers:
-                    f.start_time = f.start_time + delta
-                    f.end_time = f.start_time + timedelta(minutes=f.duration_minutes)
+        if op.start_time is not None:
+            # ligger fasen efter en låst fas? då styrs den av den låsta och får inte flyttas själv
+            anchor = db.scalar(
+                select(Operation).where(
+                    Operation.order_id == op.order_id,
+                    Operation.chain_locked.is_(True),
+                    Operation.start_time.is_not(None),
+                    Operation.start_time < op.start_time,
+                ).limit(1)
+            )
+            if anchor is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Fasen följer den låsta fasen {anchor.name} — flytta den i stället",
+                )
+            # låst fas: allt i ordern som ligger SENARE i tid flyttas lika mycket
+            # (tidsbaserat, så även andra delar av en delad fas följer med)
+            if op.chain_locked:
+                delta = start - op.start_time
+                if delta:
+                    followers = db.scalars(
+                        select(Operation).where(
+                            Operation.order_id == op.order_id,
+                            Operation.id != op.id,
+                            Operation.start_time.is_not(None),
+                            Operation.start_time > op.start_time,
+                        )
+                    ).all()
+                    for f in followers:
+                        f.start_time = f.start_time + delta
+                        f.end_time = f.start_time + timedelta(minutes=f.duration_minutes)
         op.start_time = start
         op.end_time = start + timedelta(minutes=op.duration_minutes)
         if machine_id is not None:
