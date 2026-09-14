@@ -63,7 +63,17 @@ env_set FIRST_ADMIN_PASSWORD "$ADMINPW"
 ok "JWT_SECRET och FIRST_ADMIN_PASSWORD bytta (alla inloggningar blir ogiltiga)"
 
 say "6/7 Bygger om från grunden och startar (tar några minuter)"
-docker compose build --pull --no-cache
+# api och frontend byggs från grunden. worker/beat har samma Dockerfile som api och
+# återanvänder dess lager, så att paketen bara laddas ner en gång. Upp till 3 försök
+# om nedladdningen från PyPI/npm tar timeout.
+for try in 1 2 3; do
+  if docker compose build --pull --no-cache api frontend && docker compose build worker beat; then
+    break
+  fi
+  [ "$try" = 3 ] && fail "Bygget misslyckades 3 gånger — troligen nätverket. Kör skriptet igen senare."
+  warn "bygget misslyckades (försök $try av 3), försöker igen om 15 s"
+  sleep 15
+done
 if ! docker compose up -d --wait --wait-timeout 240; then
   docker compose ps -a
   fail "Något startade inte. Kör:  docker compose logs --tail 50  och skicka utskriften"
