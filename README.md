@@ -31,7 +31,40 @@ Migrationer körs automatiskt (`alembic upgrade head`) när API-containern start
 | Läge | `.env` | Vem sköter certet |
 |---|---|---|
 | **Kunddrift** | `SITE_ADDRESS=https://aps.kund.se`, `HTTP_PORT=80`, `HTTPS_PORT=443` | Caddy skaffar & förnyar Let's Encrypt automatiskt — inget externt behövs |
-| **Labb bakom NPM** | `SITE_ADDRESS=:80`, `HTTP_PORT=8080`, `HTTPS_PORT=8443` | Din Nginx Proxy Manager terminerar TLS och forwardar till `server:8080` |
+| **Labb bakom NPM** | `SITE_ADDRESS=:80` | Din Nginx Proxy Manager terminerar TLS och forwardar till `aps-frontend:80` via nätet `npm_edge` |
+
+### Drift bakom NPM (engångssteg på servern)
+
+Frontend ligger bara på interna Docker-nät och kan inte ansluta ut mot internet. NPM når den
+via ett eget internt nät, `npm_edge`:
+
+```bash
+docker network create --internal npm_edge
+docker network connect npm_edge nginx-npm-1     # NPM-containerns namn
+```
+
+Lägg också till nätet i NPM:s egen compose-fil, så att kopplingen finns kvar när NPM skapas om:
+
+```yaml
+services:
+  npm:                       # tjänstens namn i NPM:s compose
+    networks: [npm_proxy, npm_edge]
+networks:
+  npm_proxy: { external: true }
+  npm_edge: { external: true }
+```
+
+I NPM: Forward Hostname = `aps-frontend`, Port = `80`, Scheme = `http`.
+
+### Låsta beroenden
+
+Bygget använder `frontend/package-lock.json` och `backend/constraints.txt` om de finns, så att även
+indirekta beroenden får kända versioner. Skapa dem en gång och checka in dem:
+
+```bash
+docker run --rm -v "$PWD/frontend":/app -w /app node:22-alpine npm install --package-lock-only --ignore-scripts
+docker compose run --rm --no-deps --entrypoint pip api freeze > backend/constraints.txt
+```
 
 ### Lokal utveckling
 
@@ -55,7 +88,10 @@ cd frontend && npm install && npm run dev   # proxar /api och /ws till :8000
 
 ## Driftkrav som uppfylls
 
-- Enda exponerade portar: 80/443 via Caddy. Postgres, Redis, API, worker är interna.
+- Enda exponerade portar: 80/443 via Caddy/NPM. Postgres, Redis, API, worker är interna.
+- Inga app-containrar kan ansluta ut mot internet (`internal: true` på alla deras nät).
+- App-containrarna är skrivskyddade (`read_only`), kör utan root och med `no-new-privileges`.
+- Appen vägrar starta i produktion om hemligheter saknas eller har exempelvärden kvar.
 - Automatisk TLS med förnyelse. HSTS + säkerhetsheaders.
 - Health checks och `restart: unless-stopped` på alla tjänster.
 - Persistent lagring (`db_data`, `redis_data`, `caddy_data`).

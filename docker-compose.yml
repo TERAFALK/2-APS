@@ -1,7 +1,24 @@
 name: vanertekno-aps
 
+# Gemensam härdning: ingen process kan skaffa sig mer rättigheter (setuid m.m.).
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+
+# App-containrarna: skrivskyddat filsystem (inget kan planteras i containern),
+# ingen root, inga Linux-capabilities. Bara /tmp är skrivbar (RAM, töms vid omstart).
+x-app: &app
+  <<: *hardening
+  build: ./backend
+  restart: unless-stopped
+  env_file: .env
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  networks: [internal]
+
 services:
   db:
+    <<: *hardening
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -18,6 +35,7 @@ services:
     networks: [internal]
 
   redis:
+    <<: *hardening
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
@@ -31,9 +49,7 @@ services:
     networks: [internal]
 
   api:
-    build: ./backend
-    restart: unless-stopped
-    env_file: .env
+    <<: *app
     depends_on:
       db:
         condition: service_healthy
@@ -47,52 +63,54 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-    networks: [internal]
 
   worker:
-    build: ./backend
-    restart: unless-stopped
-    env_file: .env
+    <<: *app
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info"]
-    networks: [internal]
 
   beat:
-    build: ./backend
-    restart: unless-stopped
-    env_file: .env
+    <<: *app
     depends_on:
       redis:
         condition: service_healthy
-    command: ["celery", "-A", "app.worker.celery_app", "beat", "--loglevel=info"]
-    networks: [internal]
+    command: ["celery", "-A", "app.worker.celery_app", "beat", "--loglevel=info",
+              "--schedule=/tmp/celerybeat-schedule"]
 
   frontend:
+    <<: *hardening
     build:
       context: ./frontend
       args:
         VITE_API_BASE: /api
     restart: unless-stopped
-    # LABB bakom NPM: peka din proxy-host på  aps-frontend:80  (samma mönster som dina
-    # andra appar, t.ex. insight-frontend-1:80). Frontend-nginx proxar själv /api → api.
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /run
+      - /tmp
+    # LABB bakom NPM: peka din proxy-host på  aps-frontend:80.
+    # Frontend ligger BARA på interna nät (internal + npm_edge) och kan därför inte
+    # ansluta ut mot internet. NPM når den via npm_edge. Frontend-nginx proxar /api → api.
     networks:
       internal: {}
-      npm_proxy:
+      npm_edge:
         aliases: [aps-frontend]
 
   gateway:
+    <<: *hardening
     image: caddy:2-alpine
     restart: unless-stopped
     # Startar BARA vid kunddrift med egen TLS:  docker compose --profile tls up -d
     # I labb bakom NPM behövs den inte — NPM pratar direkt med aps-frontend.
     profiles: [tls]
     depends_on: [api, frontend]
-    # LABB bakom NPM (NPM_MODE): inga host-portar behövs — NPM når Caddy via npm_proxy-nätet
-    # på container-alias "aps-gateway:80". Sätt då SITE_ADDRESS=:80 i .env.
+    # Gatewayn ligger på npm_proxy (ej internt nät) eftersom Caddy behöver nå
+    # Let's Encrypt och kunna publicera portar vid kunddrift.
     # KUNDDRIFT med egen TLS: avkommentera ports nedan och sätt SITE_ADDRESS=https://... .
     # ports:
     #   - "${HTTP_PORT:-80}:80"
@@ -116,8 +134,15 @@ volumes:
   caddy_config:
 
 networks:
+  # Internt nät utan väg ut mot internet: db, redis, api, worker, beat, frontend.
   internal:
     driver: bridge
-  # Befintligt, externt nätverk som din Nginx Proxy Manager redan ligger på.
+    internal: true
+  # Internt nät som delas med Nginx Proxy Manager — utan internetåtkomst.
+  # Skapas en gång på servern:  docker network create --internal npm_edge
+  # och NPM-containern ansluts till det (se README, "Drift bakom NPM").
+  npm_edge:
+    external: true
+  # Befintligt, externt nätverk som NPM ligger på. Används bara av gateway (profil tls).
   npm_proxy:
     external: true

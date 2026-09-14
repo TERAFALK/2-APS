@@ -1,7 +1,10 @@
 FROM node:22-alpine AS build
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+# package-lock.json (om den finns) låser alla beroenden. --ignore-scripts hindrar
+# install-skript i npm-paket från att köra kod under bygget.
+COPY package.json package-lock.jso[n] ./
+RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; \
+    else npm install --ignore-scripts; fi
 COPY . .
 ARG VITE_API_BASE=/api
 ENV VITE_API_BASE=$VITE_API_BASE
